@@ -1697,7 +1697,7 @@
                     <div style="display: flex; flex-direction: column; gap: 1.25rem;">
                         <div class="egat-card" style="border-top-color: #f43f5e; padding: 1.25rem;">
                             <div style="display: flex; align-items: center; gap: 0.75rem; border-bottom: 1.5px solid rgba(255,255,255,0.06); padding-bottom: 0.75rem; margin-bottom: 0.75rem;">
-                                <div id="dnd-char-avatar" style="width: 48px; height: 48px; border-radius: 10px; background: rgba(244, 63, 94, 0.15); border: 2.5px solid rgba(244, 63, 94, 0.4); display: flex; align-items: center; justify-content: center; font-size: 1.6rem; text-shadow: 0 0 10px rgba(244,63,94,0.6);"> Tav </div>
+                                <img id="dnd-char-avatar-img" src="dnd_hero.jpg" alt="Hero Portrait" style="width: 48px; height: 48px; border-radius: 10px; border: 2px solid #f43f5e; object-fit: cover;">
                                 <div style="text-align: left;">
                                     <h4 id="hud-char-name" style="margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--text-primary);">Tav</h4>
                                     <span id="hud-char-meta" style="font-size: 0.68rem; color: var(--text-secondary);">Level 1 Fighter</span>
@@ -1743,14 +1743,20 @@
                                 </div>
                             </div>
 
-                            <!-- Defense indicators -->
-                            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.85rem;">
+                            <!-- Defense & Active Weapon indicators -->
+                            <div style="display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 0.85rem;">
                                 <div style="flex: 1; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); padding: 0.4rem; display: flex; align-items: center; justify-content: center; gap: 0.4rem;">
                                     <span style="font-size: 1rem;">🛡️</span>
-                                    <div style="text-align: left;">
+                                    <div style="text-align: left; width: 100%;">
                                         <span style="font-size: 0.55rem; color: var(--text-secondary); display: block;">ARMOR CLASS</span>
                                         <span id="hud-char-ac" style="font-size: 0.85rem; font-weight: 800; color: var(--text-primary);">16</span>
                                     </div>
+                                </div>
+                                <div style="flex: 1; background: rgba(251, 191, 36, 0.05); border-radius: 8px; border: 1px dashed rgba(251, 191, 36, 0.2); padding: 0.5rem; text-align: left;">
+                                    <span style="font-size: 0.55rem; color: #fbbf24; font-weight: 800; display: block; text-transform: uppercase; margin-bottom: 0.25rem;">อาวุธปัจจุบัน (Equipped Weapon)</span>
+                                    <select id="dnd-weapon-select" style="width: 100%; background: rgba(0,0,0,0.5); border: 1px solid rgba(251, 191, 36, 0.35); border-radius: 6px; color: var(--text-primary); font-size: 0.78rem; font-weight: bold; padding: 0.25rem; outline: none; cursor: pointer;">
+                                        <!-- populated in JS -->
+                                    </select>
                                 </div>
                             </div>
 
@@ -1775,6 +1781,27 @@
                                 <div class="inv-slot" style="aspect-ratio: 1; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;"></div>
                             </div>
                         </div>
+
+                        <!-- Companion card (Shows when Shadowheart joins) -->
+                        <div id="dnd-companion-card" class="egat-card hidden" style="border-top-color: #a855f7; padding: 1.25rem;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem; border-bottom: 1.5px solid rgba(255,255,255,0.06); padding-bottom: 0.75rem; margin-bottom: 0.75rem;">
+                                <img src="dnd_shadowheart.jpg" style="width: 48px; height: 48px; border-radius: 10px; border: 2px solid #a855f7; object-fit: cover;">
+                                <div style="text-align: left;">
+                                    <h4 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--text-primary);">Shadowheart</h4>
+                                    <span style="font-size: 0.68rem; color: var(--text-secondary);">Level 1 Trickery Cleric</span>
+                                </div>
+                            </div>
+                            <!-- Companion HP Bar -->
+                            <div style="text-align: left;">
+                                <div style="display: flex; justify-content: space-between; font-size: 0.72rem; font-weight: bold; margin-bottom: 0.3rem;">
+                                    <span style="color: #a855f7;">พลังชีวิต (HP)</span>
+                                    <span id="hud-comp-hp-txt" style="color: #a855f7;">10 / 10</span>
+                                </div>
+                                <div style="width: 100%; height: 8px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
+                                    <div id="hud-comp-hp-bar" style="width: 100%; height: 100%; background: linear-gradient(90deg, #7c3aed, #a855f7); border-radius: 4px; transition: width 0.3s ease;"></div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="dnd-arena-grid">
@@ -1784,6 +1811,11 @@
                             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid rgba(255,255,255,0.06); padding-bottom: 0.75rem; margin-bottom: 0.75rem;">
                                 <h4 style="margin: 0; font-size: 1rem; color: #fb923c; font-weight: bold; text-transform: uppercase;" id="dnd-scene-title">ยานบิน NAUTILOID: ห้องขังปรสิต</h4>
                                 <span style="font-size: 0.7rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary); padding: 0.15rem 0.5rem; border-radius: 4px;" id="dnd-scene-location">Mind Flayer Ship</span>
+                            </div>
+
+                            <!-- Scene Illustration Art Box -->
+                            <div id="dnd-scene-art-box" style="width: 100%; height: 160px; border-radius: 10px; border: 1.5px solid rgba(251, 146, 60, 0.25); margin-bottom: 0.85rem; overflow: hidden; position: relative; display: block; box-shadow: 0 4px 15px rgba(0,0,0,0.45);">
+                                <img id="dnd-scene-art-img" src="dnd_nautiloid.jpg" alt="Scene Art" style="width: 100%; height: 100%; object-fit: cover; filter: brightness(0.85) contrast(1.05); transition: opacity 0.3s ease;">
                             </div>
 
                             <!-- Adventure Narrator Log -->
@@ -1809,7 +1841,7 @@
                         <div id="dnd-combat-card" class="egat-card hidden" style="width: 260px; border-top-color: #ef4444; padding: 1.25rem; height: auto; animation: slideIn 0.3s ease-out;">
                             <h5 style="margin: 0 0 1rem 0; font-size: 0.85rem; font-weight: bold; color: #ef4444; text-transform: uppercase; text-align: left; letter-spacing: 0.05em;">ศัตรูที่พบเจอ (Enemy Encounter) 💀</h5>
                             <div style="display: flex; flex-direction: column; gap: 1rem; align-items: center;">
-                                <div id="dnd-enemy-avatar" style="width: 72px; height: 72px; border-radius: 50%; background: rgba(239, 68, 68, 0.1); border: 2.5px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; font-size: 2.2rem; text-shadow: 0 0 12px rgba(239, 68, 68, 0.6); animation: pulseGlow 2s infinite;">🧠</div>
+                                <img id="dnd-enemy-avatar-img" src="dnd_brain_enemy.jpg" alt="Enemy Portrait" style="width: 72px; height: 72px; border-radius: 50%; border: 2.5px solid rgba(239, 68, 68, 0.45); object-fit: cover; box-shadow: 0 0 15px rgba(239, 68, 68, 0.35); animation: pulseGlow 2s infinite;">
                                 <div style="text-align: center; width: 100%;">
                                     <h4 id="dnd-enemy-name" style="margin: 0 0 0.25rem 0; font-size: 1rem; font-weight: bold; color: var(--text-primary);">Intellect Devourer</h4>
                                     <span style="font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 0.5rem;" id="dnd-enemy-meta">ระดับ 1 ปีศาจสมอง</span>

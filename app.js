@@ -3415,6 +3415,7 @@ let dndPlayer = {
     inventory: [],
     spellSlotsMax: 0,
     spellSlots: 0,
+    activeWeapon: "greatsword",
     level: 1
 };
 let dndCompanion = null; // Companion: e.g. { name: "Shadowheart", hp: 10, maxHp: 10, class: "cleric" }
@@ -3422,6 +3423,44 @@ let dndActiveEnemy = null; // Active Combat Enemy
 let dndCurrentSceneId = "pod_room";
 let dndPointPool = 27;
 let dndIsInitialized = false;
+
+// Weapons Database
+const dndWeaponsDb = {
+    greatsword: { name: "ดาบยักษ์ (Greatsword)", dice: "2d6", stat: "str", desc: "2d6 ฟันประชิด" },
+    longbow: { name: "ธนูยาว (Longbow)", dice: "1d8", stat: "dex", desc: "1d8 โจมตีไกล" },
+    dagger: { name: "มีดสั้น (Dagger)", dice: "1d4", stat: "dex", desc: "1d4 เจาะทะลวง" },
+    staff: { name: "คทาเวทย์ (Magic Staff)", dice: "1d6", stat: "int", desc: "1d6 ทุบ + พลังเวทย์" },
+    mace: { name: "กระบองเหล็ก (Mace)", dice: "1d6", stat: "str", desc: "1d6 ทุบกระแทก" },
+    runeblade: { name: "ดาบรูน (Rune Blade)", dice: "2d8", stat: "str", desc: "2d8 ฟันเวทมนตร์" }
+};
+
+// Calculate and roll damage based on weapon configuration
+function rollWeaponDamage(weaponKey) {
+    const weapon = dndWeaponsDb[weaponKey] || dndWeaponsDb.dagger;
+    const dice = weapon.dice;
+    const parts = dice.split("d");
+    const count = parseInt(parts[0]);
+    const sides = parseInt(parts[1]);
+    
+    let total = 0;
+    let rolls = [];
+    for (let i = 0; i < count; i++) {
+        const r = Math.floor(Math.random() * sides) + 1;
+        rolls.push(r);
+        total += r;
+    }
+    
+    const modifier = dndPlayer.mods[weapon.stat] || 0;
+    const grandTotal = Math.max(1, total + modifier);
+    
+    return {
+        rolls: rolls,
+        baseTotal: total,
+        modifier: modifier,
+        grandTotal: grandTotal,
+        diceText: `${dice} (${rolls.join("+")})`
+    };
+}
 
 // Scenarios / Adventure Steps Database
 const dndAdventureStory = {
@@ -3593,6 +3632,18 @@ function initDndEngine() {
     // Dice overlay rolling triggers
     document.getElementById("dnd-roll-btn").addEventListener("click", executeD20DiceRoll);
 
+    // Bind Weapon Selector Dropdown
+    const weaponSelect = document.getElementById("dnd-weapon-select");
+    if (weaponSelect) {
+        weaponSelect.addEventListener("change", (e) => {
+            dndPlayer.activeWeapon = e.target.value;
+            const w = dndWeaponsDb[dndPlayer.activeWeapon];
+            if (w) {
+                logGameMsg(`คุณสวมใส่อาวุธ: **${w.name}** (${w.desc})`, "system");
+            }
+        });
+    }
+
     // Initial character score UI refresh
     refreshPointBuyUi();
 }
@@ -3683,6 +3734,21 @@ function startDndGame() {
 
     dndPlayer.hp = dndPlayer.maxHp;
     dndPlayer.inventory = ["เสบียงยังชีพ (Rations)", "ตะเกียงเวทย์ (Torch)"];
+
+    // Set Class-specific Weapons
+    if (dndPlayer.class === "fighter") {
+        dndPlayer.inventory.push("ดาบยักษ์ (Greatsword)", "ธนูยาว (Longbow)");
+        dndPlayer.activeWeapon = "greatsword";
+    } else if (dndPlayer.class === "wizard") {
+        dndPlayer.inventory.push("คทาเวทย์ (Magic Staff)", "มีดสั้น (Dagger)");
+        dndPlayer.activeWeapon = "staff";
+    } else if (dndPlayer.class === "rogue") {
+        dndPlayer.inventory.push("มีดสั้น (Dagger)", "ธนูยาว (Longbow)");
+        dndPlayer.activeWeapon = "dagger";
+    } else if (dndPlayer.class === "cleric") {
+        dndPlayer.inventory.push("กระบองเหล็ก (Mace)", "ธนูยาว (Longbow)");
+        dndPlayer.activeWeapon = "mace";
+    }
 
     // Transition Creator to gameplay panel
     document.getElementById("dnd-char-creator").classList.add("hidden");
@@ -3777,6 +3843,53 @@ function updateDndHud() {
         }
         invGrid.appendChild(slot);
     }
+
+    // Populate weapon select element based on inventory contents
+    const select = document.getElementById("dnd-weapon-select");
+    if (select) {
+        const previousValue = select.value || dndPlayer.activeWeapon;
+        select.innerHTML = "";
+        
+        let addedCount = 0;
+        for (const key in dndWeaponsDb) {
+            const wInfo = dndWeaponsDb[key];
+            // Split name to search for word matching e.g. "ดาบยักษ์" or "ธนูยาว" or "คทาเวทย์"
+            const searchWord = wInfo.name.split(" ")[0];
+            const hasIt = dndPlayer.inventory.some(item => item.includes(searchWord));
+            if (hasIt) {
+                const opt = document.createElement("option");
+                opt.value = key;
+                opt.text = `${wInfo.name} (${wInfo.desc})`;
+                select.appendChild(opt);
+                addedCount++;
+            }
+        }
+        
+        if (addedCount > 0) {
+            // Re-select prior active weapon if still present
+            const hasPrev = Array.from(select.options).some(o => o.value === previousValue);
+            if (hasPrev) {
+                select.value = previousValue;
+                dndPlayer.activeWeapon = previousValue;
+            } else {
+                select.selectedIndex = 0;
+                dndPlayer.activeWeapon = select.value;
+            }
+        }
+    }
+
+    // Companion status card card visibility
+    const compCard = document.getElementById("dnd-companion-card");
+    if (compCard) {
+        if (dndCompanion) {
+            compCard.classList.remove("hidden");
+            document.getElementById("hud-comp-hp-txt").innerText = `${dndCompanion.hp} / ${dndCompanion.maxHp}`;
+            const compPct = (dndCompanion.hp / dndCompanion.maxHp) * 100;
+            document.getElementById("hud-comp-hp-bar").style.width = `${compPct}%`;
+        } else {
+            compCard.classList.add("hidden");
+        }
+    }
 }
 
 // Drink healing potion
@@ -3844,6 +3957,16 @@ function loadDndScene(sceneId) {
     document.getElementById("dnd-scene-title").innerText = scene.title;
     document.getElementById("dnd-scene-location").innerText = scene.location;
     
+    // Change Scene Art based on location or story state
+    const artImg = document.getElementById("dnd-scene-art-img");
+    if (artImg) {
+        if (sceneId === "escape_win") {
+            artImg.src = "dnd_hero.jpg"; // Shows hero celebrating
+        } else {
+            artImg.src = "dnd_nautiloid.jpg"; // Organic spaceship interior
+        }
+    }
+
     // Narrate scene
     logGameMsg(scene.desc, "gm");
 
@@ -4120,16 +4243,15 @@ function loadCombatTurnOptions() {
     btnAttack.style.borderColor = "rgba(239, 68, 68, 0.4)";
     btnAttack.style.color = "#fca5a5";
     
-    // Weapon display name depending on class
-    let attackText = "⚔️ ทอดเต๋าโจมตีด้วยอาวุธ (Attack Roll)";
-    if (dndPlayer.class === "rogue") attackText = "🗡️ ลอบจู่โจมจุดอ่อน (Sneak Attack Roll)";
-    btnAttack.innerText = attackText;
+    // Get currently equipped weapon information
+    const wInfo = dndWeaponsDb[dndPlayer.activeWeapon] || dndWeaponsDb.dagger;
+    btnAttack.innerText = `⚔️ โจมตีด้วย ${wInfo.name} (${wInfo.desc})`;
     
     btnAttack.addEventListener("click", () => {
-        // Trigger Attack Check vs Enemy AC
-        triggerD20Check("Weapon Attack Roll", {
-            type: dndPlayer.class === "rogue" ? "DEX" : "STR",
-            stat: dndPlayer.class === "rogue" ? "dex" : "str",
+        // Trigger Attack Check vs Enemy AC using weapon main stat
+        triggerD20Check(`Weapon Attack [${wInfo.name.split(" ")[0]}]`, {
+            type: wInfo.stat.toUpperCase(),
+            stat: wInfo.stat,
             dc: dndActiveEnemy.ac,
             success: dndCurrentSceneId,
             fail: dndCurrentSceneId
@@ -4137,15 +4259,13 @@ function loadCombatTurnOptions() {
 
         // Resolve attack callbacks
         activeDndCheck.success = () => {
-            const dmgBonus = dndPlayer.class === "rogue" ? dndPlayer.mods.dex : dndPlayer.mods.str;
-            const weaponRoll = Math.floor(Math.random() * 8) + 1; // 1d8
-            const totalDmg = Math.max(1, weaponRoll + dmgBonus);
+            const result = rollWeaponDamage(dndPlayer.activeWeapon);
             
-            dndActiveEnemy.hp = Math.max(0, dndActiveEnemy.hp - totalDmg);
-            logGameMsg(`💥 โจมตีสำเร็จ! ทอดแต้มดาเมจได้ ${weaponRoll} (โบนัส ${dmgBonus}) ➡️ สร้างความเสียหาย ${totalDmg} HP ให้กับ ${dndActiveEnemy.name}!`, "system");
+            dndActiveEnemy.hp = Math.max(0, dndActiveEnemy.hp - result.grandTotal);
+            logGameMsg(`💥 โจมตีสำเร็จด้วย ${wInfo.name}! ทอดแต้มความเสียหายได้ ${result.diceText} (โบนัสโหมด ${result.modifier >= 0 ? '+' : ''}${result.modifier}) ➡️ สร้างความเสียหาย ${result.grandTotal} HP ให้กับ ${dndActiveEnemy.name}!`, "system");
             
             // Show floating damage popup effect
-            createFloatingDamageEffect(totalDmg);
+            createFloatingDamageEffect(result.grandTotal);
             updateCombatStatus();
 
             if (dndActiveEnemy) {
@@ -4153,7 +4273,7 @@ function loadCombatTurnOptions() {
             }
         };
         activeDndCheck.fail = () => {
-            logGameMsg(`🛡️ ทอยแต้มได้ไม่พ้นเกราะ (AC ${dndActiveEnemy.ac}) ของศัตรู การโจมตีพลาดเป้าอย่างน่าเสียดาย!`, "system-fail");
+            logGameMsg(`🛡️ ทอยแต้มหลบเกราะพลาดเป้า (ต้องการ DC ${dndActiveEnemy.ac}) ของศัตรู การโจมตีด้วย ${wInfo.name.split(" ")[0]} พลาดเป้า!`, "system-fail");
             setTimeout(enemyCombatTurn, 1200);
         };
     });
@@ -4238,17 +4358,40 @@ function enemyCombatTurn() {
     setTimeout(() => {
         const roll = Math.floor(Math.random() * 20) + 1;
         const total = roll + 2; // enemy attack modifier
-        logGameMsg(`${dndActiveEnemy.name} ทำการจู่โจมด้วยแต้มทอย ${roll} (+2) = ผลลัพธ์ ${total}`, "gm");
+        
+        // Choose target: 35% chance to hit Shadowheart if she is with you and has HP
+        let targetComp = false;
+        if (dndCompanion && dndCompanion.hp > 0 && Math.random() < 0.35) {
+            targetComp = true;
+        }
 
-        if (total >= dndPlayer.ac) {
+        const targetName = targetComp ? dndCompanion.name : dndPlayer.name;
+        const targetAc = targetComp ? 15 : dndPlayer.ac; // Shadowheart has AC 15
+
+        logGameMsg(`${dndActiveEnemy.name} ทอยจู่โจมใส่ ${targetName} ด้วยแต้มทอย ${roll} (+2) = ผลลัพธ์ ${total}`, "gm");
+
+        if (total >= targetAc) {
             const damage = Math.floor(Math.random() * 6) + 1; // 1d6 damage
-            dndPlayer.hp = Math.max(0, dndPlayer.hp - damage);
-            logGameMsg(`💥 ศัตรูโจมตีโดนคุณ! คุณได้รับความเสียหาย ${damage} HP`, "system-fail");
             
-            // Screen Shake Effect
-            const gameCard = document.getElementById("dnd-game-panel");
-            gameCard.classList.add("shake-panel");
-            setTimeout(() => { gameCard.classList.remove("shake-panel"); }, 450);
+            if (targetComp) {
+                dndCompanion.hp = Math.max(0, dndCompanion.hp - damage);
+                logGameMsg(`💥 ศัตรูโจมตีโดน Shadowheart! เธอได้รับความเสียหาย ${damage} HP`, "system-fail");
+                
+                if (dndCompanion.hp <= 0) {
+                    logGameMsg("💀 Shadowheart ได้รับความเสียหายรุนแรงจนหมดสติล้มลงและไม่สามารถช่วยคุณต่อสู้ได้!", "system-fail");
+                    dndCompanion = null; // Removed from team
+                }
+            } else {
+                dndPlayer.hp = Math.max(0, dndPlayer.hp - damage);
+                logGameMsg(`💥 ศัตรูโจมตีโดนคุณ! คุณได้รับความเสียหาย ${damage} HP`, "system-fail");
+                
+                // Screen Shake Effect
+                const gameCard = document.getElementById("dnd-game-panel");
+                if (gameCard) {
+                    gameCard.classList.add("shake-panel");
+                    setTimeout(() => { gameCard.classList.remove("shake-panel"); }, 450);
+                }
+            }
 
             updateDndHud();
             
@@ -4257,7 +4400,7 @@ function enemyCombatTurn() {
                 return;
             }
         } else {
-            logGameMsg(`🛡️ การโจมตีติดโล่ป้องกัน/เกราะ (AC ${dndPlayer.ac}) ของคุณอย่างรอดพ้นหวุดหวิด!`, "system");
+            logGameMsg(`🛡️ การโจมตีปะทะโล่ป้องกันของ ${targetName} (AC ${targetAc}) พลาดเป้า!`, "system");
         }
 
         // Loop back options if still alive
