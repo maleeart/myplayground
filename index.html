@@ -60,6 +60,16 @@
                         </svg>
                         วิเคราะห์กองทุน กฟผ.
                     </button>
+                    <button id="nav-dnd-btn" class="nav-link-btn" data-theme="dnd">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5" />
+                            <line x1="12" y1="22" x2="12" y2="15.5" />
+                            <line x1="12" y1="15.5" x2="22" y2="15.5" />
+                            <line x1="12" y1="15.5" x2="2" y2="15.5" />
+                            <line x1="12" y1="2" x2="12" y2="15.5" />
+                        </svg>
+                        เกม RPG D&D
+                    </button>
                 </nav>
                 <!-- Tab Switcher -->
                 <div id="powerplant-tabs" class="tab-group hidden">
@@ -130,6 +140,21 @@
                     <p>จำลองผลตอบแทนกองทุนสำรองเลี้ยงชีพพนักงาน กฟผ. ทั้ง 4 นโยบาย (EGAT1-5) พร้อมเครื่องมือวางแผนเกษียณแบบถัวเฉลี่ยรายเดือน (DCA) พลัสยอดสมทบจาก กฟผ. จริง และจำลองเหตุการณ์ข่าวกระทบพอร์ตลงทุน</p>
                     <button class="mode-btn btn-purple">วิเคราะห์พอร์ตกองทุน →</button>
                 </div>
+
+                <div class="mode-card" id="mode-dnd">
+                    <div class="mode-icon-box bg-dnd-glow">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5" />
+                            <polyline points="2 8.5 12 15.5 22 8.5" />
+                            <polyline points="12 2 12 15.5" />
+                            <line x1="12" y1="15.5" x2="22" y2="22" />
+                            <line x1="12" y1="15.5" x2="2" y2="22" />
+                        </svg>
+                    </div>
+                    <h3>เกมสวมบทบาท D&D RPG (Baldur's Gate 3) 🐉</h3>
+                    <p>ผจญภัยหนีตายจากปรสิตสมองบนยานบิน Nautiloid ในโลกแฟนตาซี Faerûn สร้างตัวละคร กำหนดความสามารถ ทอดลูกเต๋า D20 ลุ้นผลวิกฤต หรือป้อนการกระทำได้อิสระตามที่คุณจินตนาการ!</p>
+                    <button class="mode-btn btn-dnd">เริ่มการผจญภัย →</button>
+                </div>
             </div>
 
             <!-- System Command HUD -->
@@ -157,6 +182,10 @@
                     <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); text-align: left;">
                         <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; font-weight: bold; text-transform: uppercase;">PVD Predictor</span>
                         <span style="font-size: 0.82rem; font-weight: 700; color: #c084fc; display: block; margin-top: 0.25rem;">EGAT1-5 Modeled</span>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); text-align: left;">
+                        <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; font-weight: bold; text-transform: uppercase;">RPG GM Engine</span>
+                        <span style="font-size: 0.82rem; font-weight: 700; color: #f43f5e; display: block; margin-top: 0.25rem;">D20 GM Active</span>
                     </div>
                 </div>
             </div>
@@ -1484,6 +1513,376 @@
                                 <button class="btn btn-card-pass" onclick="resetEgatYieldMod()">คืนค่าผลตอบแทนพื้นฐาน 🔄</button>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- View 6: DND Adventure View -->
+        <div id="dnd-adventure-view" class="view-section hidden" style="background: linear-gradient(135deg, #0f0714 0%, #170d24 100%); min-height: 80vh; padding: 2rem 1.5rem; position: relative; overflow-y: auto;">
+            <div class="cf-container" style="max-width: 1200px;">
+                
+                <!-- Section 1: Character Creator -->
+                <div id="dnd-char-creator" class="dnd-creator-panel" style="background: rgba(30, 20, 45, 0.55); backdrop-filter: blur(16px); border: 2px solid rgba(244, 63, 94, 0.25); border-radius: 24px; padding: 2.5rem; box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6); max-width: 900px; margin: 0 auto;">
+                    <div style="text-align: center; margin-bottom: 2rem; border-bottom: 1.5px solid rgba(244, 63, 94, 0.2); padding-bottom: 1.5rem;">
+                        <h2 style="font-family: 'Cinzel', serif, sans-serif; font-size: 2.5rem; font-weight: 800; background: linear-gradient(135deg, #f43f5e, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0.5rem; letter-spacing: 0.05em; text-transform: uppercase;">Character Creator 🛡️</h2>
+                        <p style="color: var(--text-secondary); font-size: 1.05rem;">สร้างตัวละครของคุณเพื่อเริ่มผจญภัยในดินแดน Faerûn (อิงกฎ D&D 5e / Baldur's Gate 3)</p>
+                    </div>
+
+                    <div class="creator-grid" style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 2.5rem; align-items: start;">
+                        <!-- Left Creator Column: Details, Race, Class -->
+                        <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+                            <div class="form-group-egat" style="width: 100%;">
+                                <label style="font-weight: 800; color: #fbbf24; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em;">ชื่อนักผจญภัย (Character Name)</label>
+                                <input type="text" id="dnd-char-name" value="Tav" placeholder="ใส่ชื่อตัวละครของคุณ..." style="background: rgba(0,0,0,0.3); border: 1.5px solid rgba(244, 63, 94, 0.3); padding: 0.8rem 1rem; border-radius: 10px; color: var(--text-primary); font-weight: bold; width: 100%; outline: none; margin-top: 0.5rem;">
+                            </div>
+
+                            <div>
+                                <label style="font-weight: 800; color: #fbbf24; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em;">เลือกเผ่าพันธุ์ (Race Selection)</label>
+                                <div class="dnd-race-select-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin-top: 0.5rem;">
+                                    <div class="dnd-select-pill active" data-race="human" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.8rem; text-align: center; cursor: pointer; transition: all 0.2s;">
+                                        <h6 style="margin: 0; color: var(--text-primary); font-size: 0.9rem;">Human</h6>
+                                        <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; margin-top: 0.25rem;">+1 ทุกค่าคุณลักษณะ</span>
+                                    </div>
+                                    <div class="dnd-select-pill" data-race="elf" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.8rem; text-align: center; cursor: pointer; transition: all 0.2s;">
+                                        <h6 style="margin: 0; color: var(--text-primary); font-size: 0.9rem;">Elf</h6>
+                                        <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; margin-top: 0.25rem;">+2 DEX, +1 INT</span>
+                                    </div>
+                                    <div class="dnd-select-pill" data-race="dwarf" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.8rem; text-align: center; cursor: pointer; transition: all 0.2s;">
+                                        <h6 style="margin: 0; color: var(--text-primary); font-size: 0.9rem;">Dwarf</h6>
+                                        <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; margin-top: 0.25rem;">+2 CON, +1 STR</span>
+                                    </div>
+                                    <div class="dnd-select-pill" data-race="tiefling" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.8rem; text-align: center; cursor: pointer; transition: all 0.2s;">
+                                        <h6 style="margin: 0; color: var(--text-primary); font-size: 0.9rem;">Tiefling</h6>
+                                        <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; margin-top: 0.25rem;">+2 CHA, +1 INT</span>
+                                    </div>
+                                    <div class="dnd-select-pill" data-race="githyanki" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.8rem; text-align: center; cursor: pointer; transition: all 0.2s;">
+                                        <h6 style="margin: 0; color: var(--text-primary); font-size: 0.9rem;">Githyanki</h6>
+                                        <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; margin-top: 0.25rem;">+2 STR, +1 INT</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label style="font-weight: 800; color: #fbbf24; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em;">เลือกอาชีพ (Class Selection)</label>
+                                <div class="dnd-class-select-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; margin-top: 0.5rem;">
+                                    <div class="dnd-class-pill active" data-class="fighter" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.85rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 0.75rem;">
+                                        <span style="font-size: 1.5rem;">⚔️</span>
+                                        <div style="text-align: left;">
+                                            <h6 style="margin: 0; color: var(--text-primary); font-size: 0.95rem;">Fighter</h6>
+                                            <span style="font-size: 0.65rem; color: var(--text-secondary);">HP 12 | AC 16 | นักรบแกร่ง</span>
+                                        </div>
+                                    </div>
+                                    <div class="dnd-class-pill" data-class="wizard" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.85rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 0.75rem;">
+                                        <span style="font-size: 1.5rem;">🔮</span>
+                                        <div style="text-align: left;">
+                                            <h6 style="margin: 0; color: var(--text-primary); font-size: 0.95rem;">Wizard</h6>
+                                            <span style="font-size: 0.65rem; color: var(--text-secondary);">HP 6 | AC 12 | จอมเวทย์คาถา</span>
+                                        </div>
+                                    </div>
+                                    <div class="dnd-class-pill" data-class="rogue" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.85rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 0.75rem;">
+                                        <span style="font-size: 1.5rem;">🗡️</span>
+                                        <div style="text-align: left;">
+                                            <h6 style="margin: 0; color: var(--text-primary); font-size: 0.95rem;">Rogue</h6>
+                                            <span style="font-size: 0.65rem; color: var(--text-secondary);">HP 8 | AC 14 | นักลอบสังหาร</span>
+                                        </div>
+                                    </div>
+                                    <div class="dnd-class-pill" data-class="cleric" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 0.85rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 0.75rem;">
+                                        <span style="font-size: 1.5rem;">✨</span>
+                                        <div style="text-align: left;">
+                                            <h6 style="margin: 0; color: var(--text-primary); font-size: 0.95rem;">Cleric</h6>
+                                            <span style="font-size: 0.65rem; color: var(--text-secondary);">HP 10 | AC 15 | นักบวชรักษา</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Creator Column: Ability Allocation (Point Buy) -->
+                        <div style="background: rgba(0,0,0,0.25); border: 1.5px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                                <h5 style="margin: 0; font-size: 1rem; color: #fbbf24; font-weight: 700; text-transform: uppercase;">Ability Scores</h5>
+                                <span style="font-size: 0.8rem; font-weight: 800; background: rgba(244, 63, 94, 0.15); border: 1px solid rgba(244, 63, 94, 0.3); color: #f43f5e; padding: 0.2rem 0.6rem; border-radius: 6px;" id="dnd-pointbuy-pool">แต้มคงเหลือ: 27</span>
+                            </div>
+
+                            <!-- STR -->
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="text-align: left;">
+                                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-primary);">STR (พละกำลัง)</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-secondary); display: block;">โบนัสโจมตีประชิดและยกของ</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <button class="dnd-btn-adjust minus" data-stat="str" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">-</button>
+                                    <span id="val-str" style="width: 20px; text-align: center; font-weight: 800;">8</span>
+                                    <button class="dnd-btn-adjust plus" data-stat="str" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">+</button>
+                                    <span id="mod-str" style="font-size: 0.72rem; color: #10b981; min-width: 24px; text-align: right; font-weight: bold;">-1</span>
+                                </div>
+                            </div>
+                            <!-- DEX -->
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="text-align: left;">
+                                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-primary);">DEX (ความว่องไว)</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-secondary); display: block;">คำนวณ AC ลอบเร้น โจมตีไกล</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <button class="dnd-btn-adjust minus" data-stat="dex" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">-</button>
+                                    <span id="val-dex" style="width: 20px; text-align: center; font-weight: 800;">8</span>
+                                    <button class="dnd-btn-adjust plus" data-stat="dex" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">+</button>
+                                    <span id="mod-dex" style="font-size: 0.72rem; color: #10b981; min-width: 24px; text-align: right; font-weight: bold;">-1</span>
+                                </div>
+                            </div>
+                            <!-- CON -->
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="text-align: left;">
+                                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-primary);">CON (ความทนทาน)</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-secondary); display: block;">เพิ่มขีดจำกัด HP สูงสุด</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <button class="dnd-btn-adjust minus" data-stat="con" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">-</button>
+                                    <span id="val-con" style="width: 20px; text-align: center; font-weight: 800;">8</span>
+                                    <button class="dnd-btn-adjust plus" data-stat="con" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">+</button>
+                                    <span id="mod-con" style="font-size: 0.72rem; color: #10b981; min-width: 24px; text-align: right; font-weight: bold;">-1</span>
+                                </div>
+                            </div>
+                            <!-- INT -->
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="text-align: left;">
+                                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-primary);">INT (สติปัญญา)</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-secondary); display: block;">ใช้ร่ายคาถาเวทมนตร์ (Wizard)</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <button class="dnd-btn-adjust minus" data-stat="int" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">-</button>
+                                    <span id="val-int" style="width: 20px; text-align: center; font-weight: 800;">8</span>
+                                    <button class="dnd-btn-adjust plus" data-stat="int" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">+</button>
+                                    <span id="mod-int" style="font-size: 0.72rem; color: #10b981; min-width: 24px; text-align: right; font-weight: bold;">-1</span>
+                                </div>
+                            </div>
+                            <!-- WIS -->
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="text-align: left;">
+                                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-primary);">WIS (สัมผัสพิเศษ)</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-secondary); display: block;">ใช้สำหรับเวทย์ฟื้นฟูและสัญชาตญาณ</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <button class="dnd-btn-adjust minus" data-stat="wis" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">-</button>
+                                    <span id="val-wis" style="width: 20px; text-align: center; font-weight: 800;">8</span>
+                                    <button class="dnd-btn-adjust plus" data-stat="wis" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">+</button>
+                                    <span id="mod-wis" style="font-size: 0.72rem; color: #10b981; min-width: 24px; text-align: right; font-weight: bold;">-1</span>
+                                </div>
+                            </div>
+                            <!-- CHA -->
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="text-align: left;">
+                                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-primary);">CHA (เสน่ห์)</span>
+                                    <span style="font-size: 0.65rem; color: var(--text-secondary); display: block;">ใช้ในการเจรจาหว่านล้อมและต่อรอง</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                    <button class="dnd-btn-adjust minus" data-stat="cha" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">-</button>
+                                    <span id="val-cha" style="width: 20px; text-align: center; font-weight: 800;">8</span>
+                                    <button class="dnd-btn-adjust plus" data-stat="cha" style="width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: #fff; font-weight: bold; cursor: pointer;">+</button>
+                                    <span id="mod-cha" style="font-size: 0.72rem; color: #10b981; min-width: 24px; text-align: right; font-weight: bold;">-1</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 2rem;">
+                        <button id="dnd-start-btn" style="background: linear-gradient(135deg, #f43f5e, #e11d48); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; font-size: 1.1rem; font-weight: bold; padding: 0.8rem 2.5rem; cursor: pointer; transition: all 0.3s; box-shadow: 0 4px 15px rgba(244, 63, 94, 0.4); text-transform: uppercase;">เริ่มต้นการผจญภัย →</button>
+                    </div>
+                </div>
+
+                <!-- Section 2: DND Game Layout (Hidden initially) -->
+                <div id="dnd-game-panel" class="hidden" style="display: grid; grid-template-columns: 280px 1fr; gap: 1.5rem; align-items: start;">
+                    
+                    <!-- Left Column: Character Sheet Sidebar -->
+                    <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                        <div class="egat-card" style="border-top-color: #f43f5e; padding: 1.25rem;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem; border-bottom: 1.5px solid rgba(255,255,255,0.06); padding-bottom: 0.75rem; margin-bottom: 0.75rem;">
+                                <div id="dnd-char-avatar" style="width: 48px; height: 48px; border-radius: 10px; background: rgba(244, 63, 94, 0.15); border: 2.5px solid rgba(244, 63, 94, 0.4); display: flex; align-items: center; justify-content: center; font-size: 1.6rem; text-shadow: 0 0 10px rgba(244,63,94,0.6);"> Tav </div>
+                                <div style="text-align: left;">
+                                    <h4 id="hud-char-name" style="margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--text-primary);">Tav</h4>
+                                    <span id="hud-char-meta" style="font-size: 0.68rem; color: var(--text-secondary);">Level 1 Fighter</span>
+                                </div>
+                            </div>
+
+                            <!-- HP Bar -->
+                            <div style="text-align: left; margin-bottom: 0.85rem;">
+                                <div style="display: flex; justify-content: space-between; font-size: 0.72rem; font-weight: bold; margin-bottom: 0.3rem;">
+                                    <span style="color: #f43f5e;">พลังชีวิต (HP)</span>
+                                    <span id="hud-char-hp-txt" style="color: #f43f5e;">12 / 12</span>
+                                </div>
+                                <div style="width: 100%; height: 8px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
+                                    <div id="hud-char-hp-bar" style="width: 100%; height: 100%; background: linear-gradient(90deg, #e11d48, #f43f5e); border-radius: 4px; transition: width 0.3s ease;"></div>
+                                </div>
+                            </div>
+
+                            <!-- Attributes lists -->
+                            <div class="hud-stats-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 0.85rem;">
+                                <div style="background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.35rem 0.2rem; border: 1px solid rgba(255,255,255,0.02);">
+                                    <span style="font-size: 0.55rem; color: var(--text-secondary); display: block; text-transform: uppercase;">STR</span>
+                                    <span id="hud-val-str" style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary);">8</span>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.35rem 0.2rem; border: 1px solid rgba(255,255,255,0.02);">
+                                    <span style="font-size: 0.55rem; color: var(--text-secondary); display: block; text-transform: uppercase;">DEX</span>
+                                    <span id="hud-val-dex" style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary);">8</span>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.35rem 0.2rem; border: 1px solid rgba(255,255,255,0.02);">
+                                    <span style="font-size: 0.55rem; color: var(--text-secondary); display: block; text-transform: uppercase;">CON</span>
+                                    <span id="hud-val-con" style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary);">8</span>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.35rem 0.2rem; border: 1px solid rgba(255,255,255,0.02);">
+                                    <span style="font-size: 0.55rem; color: var(--text-secondary); display: block; text-transform: uppercase;">INT</span>
+                                    <span id="hud-val-int" style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary);">8</span>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.35rem 0.2rem; border: 1px solid rgba(255,255,255,0.02);">
+                                    <span style="font-size: 0.55rem; color: var(--text-secondary); display: block; text-transform: uppercase;">WIS</span>
+                                    <span id="hud-val-wis" style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary);">8</span>
+                                </div>
+                                <div style="background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.35rem 0.2rem; border: 1px solid rgba(255,255,255,0.02);">
+                                    <span style="font-size: 0.55rem; color: var(--text-secondary); display: block; text-transform: uppercase;">CHA</span>
+                                    <span id="hud-val-cha" style="font-size: 0.82rem; font-weight: 800; color: var(--text-primary);">8</span>
+                                </div>
+                            </div>
+
+                            <!-- Defense indicators -->
+                            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.85rem;">
+                                <div style="flex: 1; background: rgba(0,0,0,0.15); border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); padding: 0.4rem; display: flex; align-items: center; justify-content: center; gap: 0.4rem;">
+                                    <span style="font-size: 1rem;">🛡️</span>
+                                    <div style="text-align: left;">
+                                        <span style="font-size: 0.55rem; color: var(--text-secondary); display: block;">ARMOR CLASS</span>
+                                        <span id="hud-char-ac" style="font-size: 0.85rem; font-weight: 800; color: var(--text-primary);">16</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Spell Slots (Wizard / Cleric specific) -->
+                            <div id="hud-spellslots-container" class="hidden" style="text-align: left; margin-bottom: 0.85rem; background: rgba(168,85,247,0.06); border: 1px dashed rgba(168,85,247,0.25); border-radius: 8px; padding: 0.5rem;">
+                                <span style="font-size: 0.65rem; color: #a855f7; font-weight: bold; text-transform: uppercase; display: block; margin-bottom: 0.25rem;">ช่องเวทมนตร์ (Spell Slots Lvl 1)</span>
+                                <div style="display: flex; gap: 0.35rem;" id="hud-spellslots-stars">
+                                    <span class="slot-star">⭐</span>
+                                    <span class="slot-star">⭐</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Inventory card -->
+                        <div class="egat-card" style="border-top-color: #fbbf24; padding: 1.25rem;">
+                            <h5 style="margin: 0 0 0.75rem 0; font-size: 0.85rem; font-weight: bold; color: #fbbf24; text-transform: uppercase; text-align: left; letter-spacing: 0.05em;">สัมภาระ (Inventory) 🎒</h5>
+                            <div id="hud-inventory" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem;">
+                                <!-- Inventory slots injected dynamically -->
+                                <div class="inv-slot" style="aspect-ratio: 1; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;"></div>
+                                <div class="inv-slot" style="aspect-ratio: 1; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;"></div>
+                                <div class="inv-slot" style="aspect-ratio: 1; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;"></div>
+                                <div class="inv-slot" style="aspect-ratio: 1; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 1.2rem;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Center & Right gameplay arena -->
+                    <div style="display: grid; grid-template-columns: 1fr auto; gap: 1.5rem; align-items: start; height: 100%;">
+                        
+                        <!-- Narrative Terminal -->
+                        <div class="egat-card" style="border-top-color: #fb923c; padding: 1.5rem; display: flex; flex-direction: column; height: 600px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid rgba(255,255,255,0.06); padding-bottom: 0.75rem; margin-bottom: 0.75rem;">
+                                <h4 style="margin: 0; font-size: 1rem; color: #fb923c; font-weight: bold; text-transform: uppercase;" id="dnd-scene-title">ยานบิน NAUTILOID: ห้องขังปรสิต</h4>
+                                <span style="font-size: 0.7rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--text-secondary); padding: 0.15rem 0.5rem; border-radius: 4px;" id="dnd-scene-location">Mind Flayer Ship</span>
+                            </div>
+
+                            <!-- Adventure Narrator Log -->
+                            <div id="dnd-log" style="flex-grow: 1; overflow-y: auto; text-align: left; padding: 0.5rem; display: flex; flex-direction: column; gap: 1rem; scroll-behavior: smooth; margin-bottom: 1rem; padding-right: 10px;">
+                                <!-- Story lines injected here -->
+                            </div>
+
+                            <!-- Options Select Console -->
+                            <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                                <div id="dnd-options" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                    <!-- Dynamic options button elements injected here -->
+                                </div>
+
+                                <!-- Free Action Input Box -->
+                                <div id="dnd-custom-action-container" style="display: flex; gap: 0.5rem; margin-top: 0.25rem;">
+                                    <input type="text" id="dnd-custom-action-input" placeholder="พิมพ์สิ่งที่คุณต้องการกระทำแบบอิสระที่นี่ (เช่น: ขโมยของ, หว่านล้อม)..." style="flex: 1; background: rgba(0,0,0,0.3); border: 1.5px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.6rem 0.9rem; color: var(--text-primary); outline: none; font-size: 0.82rem; transition: border-color 0.2s;">
+                                    <button id="dnd-custom-action-btn" style="background: rgba(251, 146, 60, 0.15); border: 1.5px solid rgba(251, 146, 60, 0.35); border-radius: 8px; color: #fb923c; font-weight: bold; font-size: 0.82rem; padding: 0 1.25rem; cursor: pointer; transition: all 0.2s;">ส่งการทำ ⚔️</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Panel: Combat Stats (Only shown when activeCombat = true) -->
+                        <div id="dnd-combat-card" class="egat-card hidden" style="width: 260px; border-top-color: #ef4444; padding: 1.25rem; height: auto; animation: slideIn 0.3s ease-out;">
+                            <h5 style="margin: 0 0 1rem 0; font-size: 0.85rem; font-weight: bold; color: #ef4444; text-transform: uppercase; text-align: left; letter-spacing: 0.05em;">ศัตรูที่พบเจอ (Enemy Encounter) 💀</h5>
+                            <div style="display: flex; flex-direction: column; gap: 1rem; align-items: center;">
+                                <div id="dnd-enemy-avatar" style="width: 72px; height: 72px; border-radius: 50%; background: rgba(239, 68, 68, 0.1); border: 2.5px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; font-size: 2.2rem; text-shadow: 0 0 12px rgba(239, 68, 68, 0.6); animation: pulseGlow 2s infinite;">🧠</div>
+                                <div style="text-align: center; width: 100%;">
+                                    <h4 id="dnd-enemy-name" style="margin: 0 0 0.25rem 0; font-size: 1rem; font-weight: bold; color: var(--text-primary);">Intellect Devourer</h4>
+                                    <span style="font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; display: block; margin-bottom: 0.5rem;" id="dnd-enemy-meta">ระดับ 1 ปีศาจสมอง</span>
+                                    
+                                    <!-- Enemy HP Bar -->
+                                    <div style="width: 100%; height: 6px; background: rgba(0,0,0,0.4); border-radius: 3px; overflow: hidden; margin-bottom: 0.25rem;">
+                                        <div id="dnd-enemy-hp-bar" style="width: 100%; height: 100%; background: #ef4444; border-radius: 3px; transition: width 0.3s ease;"></div>
+                                    </div>
+                                    <span id="dnd-enemy-hp-txt" style="font-size: 0.72rem; font-weight: bold; color: #ef4444;">15 / 15 HP</span>
+                                </div>
+                                <div style="display: flex; gap: 0.5rem; justify-content: center; width: 100%;">
+                                    <div style="background: rgba(0,0,0,0.25); border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); padding: 0.35rem 0.75rem; display: flex; align-items: center; gap: 0.3rem;">
+                                        <span style="font-size: 0.8rem;">🛡️</span>
+                                        <span id="dnd-enemy-ac" style="font-size: 0.85rem; font-weight: bold;">AC 10</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Floating D20 Overlay Dice Modal (Full Screen Overlay) -->
+            <div id="dnd-dice-overlay" class="hidden" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(11, 7, 18, 0.92); z-index: 10000; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(12px);">
+                <div id="dnd-dice-card" style="background: rgba(25, 17, 36, 0.95); border: 2.5px solid rgba(251, 191, 36, 0.4); box-shadow: 0 0 50px rgba(251, 191, 36, 0.25); border-radius: 30px; width: 360px; padding: 2.5rem; text-align: center; display: flex; flex-direction: column; gap: 1.5rem; align-items: center; position: relative;">
+                    <div style="position: absolute; top: 1rem; right: 1.5rem; font-size: 1.5rem; color: #fbbf24; cursor: pointer;" id="dnd-dice-close" class="hidden">&times;</div>
+                    <div style="text-align: center;">
+                        <h4 id="dnd-check-title" style="margin: 0; font-size: 1.05rem; font-weight: 800; color: #fbbf24; text-transform: uppercase; letter-spacing: 0.05em;">[LOCKPICK] SLIGHT OF HAND CHECK</h4>
+                        <span id="dnd-check-dc" style="font-size: 0.8rem; font-weight: 800; color: var(--text-secondary); display: block; margin-top: 0.25rem;">ความยาก (Target DC): 12</span>
+                    </div>
+
+                    <!-- 3D-like Glowing Neon D20 Dice Container -->
+                    <div id="dnd-d20-container" style="position: relative; width: 120px; height: 120px; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none;">
+                        <!-- Glow effect -->
+                        <div class="dice-aura" style="position: absolute; width: 100px; height: 100px; border-radius: 50%; background: rgba(251, 191, 36, 0.15); filter: blur(25px); transition: all 0.3s;"></div>
+                        <!-- Outer shape SVG -->
+                        <svg viewBox="0 0 100 100" style="width: 100px; height: 100px; z-index: 2;" id="dnd-d20-svg">
+                            <!-- D20 outline triangles -->
+                            <polygon points="50,5 95,30 95,70 50,95 5,70 5,30" fill="rgba(30,12,42,0.8)" stroke="#fbbf24" stroke-width="2.5" />
+                            <polygon points="50,5 50,95" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="2,2" />
+                            <polygon points="5,30 95,30 50,95" fill="none" stroke="#fbbf24" stroke-width="1.5" />
+                            <polygon points="5,70 95,70 50,5" fill="none" stroke="#fbbf24" stroke-width="1.5" />
+                            <polygon points="50,37 20,70 80,70" fill="none" stroke="#fbbf24" stroke-width="1.5" />
+                            <polygon points="50,37 50,5 20,30" fill="none" stroke="#fbbf24" stroke-width="1.5" />
+                            <polygon points="50,37 50,5 80,30" fill="none" stroke="#fbbf24" stroke-width="1.5" />
+                        </svg>
+                        <span id="dnd-d20-number" style="position: absolute; z-index: 3; font-size: 1.8rem; font-weight: 900; color: #fff; text-shadow: 0 0 8px rgba(251,191,36,0.8);">20</span>
+                    </div>
+
+                    <!-- Dice modifier details -->
+                    <div style="text-align: center; width: 100%; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 1rem;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.35rem;">
+                            <span>ผลการทอดเต๋า D20:</span>
+                            <span id="dnd-roll-base" style="font-weight: bold; color: var(--text-primary);">-</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                            <span id="dnd-roll-mod-label">โบนัสความสามารถ (Modifier):</span>
+                            <span id="dnd-roll-mod-val" style="font-weight: bold; color: #10b981;">+0</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.95rem; font-weight: 800; border-top: 1.5px dashed rgba(255,255,255,0.06); padding-top: 0.5rem;">
+                            <span style="color: #fbbf24;">ยอดผลลัพธ์สุทธิ:</span>
+                            <span id="dnd-roll-total" style="color: #fbbf24;">-</span>
+                        </div>
+                    </div>
+
+                    <!-- Trigger Roll Button -->
+                    <button id="dnd-roll-btn" style="background: linear-gradient(135deg, #fbbf24, #d97706); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; color: #000; font-size: 0.95rem; font-weight: 800; padding: 0.65rem 1.8rem; cursor: pointer; transition: all 0.2s; width: 100%;">ทอดลูกเต๋า 🎲</button>
+                    
+                    <!-- Dice Roll Success/Failure Indicator -->
+                    <div id="dnd-dice-result-panel" class="hidden" style="position: absolute; bottom: 1.5rem; width: 80%; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 900; font-size: 1.1rem; text-transform: uppercase; animation: popBadge 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; letter-spacing: 0.05em; text-shadow: 0 0 10px rgba(0,0,0,0.5);">
+                        SUCCESS
                     </div>
                 </div>
             </div>

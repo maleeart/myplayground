@@ -766,6 +766,7 @@ function switchView(viewName) {
     const affiliateView = document.getElementById("affiliate-view");
     const cashflowView = document.getElementById("cashflow-view");
     const egatFundsView = document.getElementById("egat-funds-view");
+    const dndAdventureView = document.getElementById("dnd-adventure-view");
     const powerplantTabs = document.getElementById("powerplant-tabs");
 
     // Pause powerplant autoplay when leaving powerplant view
@@ -779,6 +780,7 @@ function switchView(viewName) {
     affiliateView.classList.add("hidden");
     cashflowView.classList.add("hidden");
     if (egatFundsView) egatFundsView.classList.add("hidden");
+    if (dndAdventureView) dndAdventureView.classList.add("hidden");
 
     // Update active nav button
     document.querySelectorAll(".nav-link-btn").forEach(btn => btn.classList.remove("active"));
@@ -812,6 +814,13 @@ function switchView(viewName) {
         powerplantTabs.classList.add("hidden");
         // Initialize EGAT funds analyzer engine
         initEgatFundsPage();
+    } else if (viewName === "dnd") {
+        if (dndAdventureView) dndAdventureView.classList.remove("hidden");
+        const navBtn = document.getElementById("nav-dnd-btn");
+        if (navBtn) navBtn.classList.add("active");
+        powerplantTabs.classList.add("hidden");
+        // Initialize DND engine
+        initDndEngine();
     }
 }
 
@@ -829,6 +838,9 @@ function initNavigation() {
     const cardEgat = document.getElementById("mode-egat");
     if (cardEgat) cardEgat.addEventListener("click", () => switchView("egat"));
 
+    const cardDnd = document.getElementById("mode-dnd");
+    if (cardDnd) cardDnd.addEventListener("click", () => switchView("dnd"));
+
     // Top Navigation Link Buttons
     document.getElementById("nav-home-btn").addEventListener("click", () => switchView("home"));
     document.getElementById("nav-powerplant-btn").addEventListener("click", () => switchView("powerplant"));
@@ -837,6 +849,9 @@ function initNavigation() {
     
     const navEgat = document.getElementById("nav-egat-btn");
     if (navEgat) navEgat.addEventListener("click", () => switchView("egat"));
+
+    const navDnd = document.getElementById("nav-dnd-btn");
+    if (navDnd) navDnd.addEventListener("click", () => switchView("dnd"));
 
     // Brand Logo Click
     document.getElementById("brand-logo").addEventListener("click", () => switchView("home"));
@@ -3382,5 +3397,913 @@ function hideActualTooltip() {
     const tooltip = document.getElementById("egat-chart-tooltip");
     if (tooltip) tooltip.classList.add("hidden");
 }
+
+// ==========================================
+// DND RPG GAME ENGINE (BALDUR'S GATE 3 INSPIRED)
+// ==========================================
+
+// Game State
+let dndPlayer = {
+    name: "Tav",
+    race: "human",
+    class: "fighter",
+    maxHp: 12,
+    hp: 12,
+    ac: 16,
+    scores: { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 },
+    mods: { str: -1, dex: -1, con: -1, int: -1, wis: -1, cha: -1 },
+    inventory: [],
+    spellSlotsMax: 0,
+    spellSlots: 0,
+    level: 1
+};
+let dndCompanion = null; // Companion: e.g. { name: "Shadowheart", hp: 10, maxHp: 10, class: "cleric" }
+let dndActiveEnemy = null; // Active Combat Enemy
+let dndCurrentSceneId = "pod_room";
+let dndPointPool = 27;
+let dndIsInitialized = false;
+
+// Scenarios / Adventure Steps Database
+const dndAdventureStory = {
+    pod_room: {
+        title: "ยานบิน NAUTILOID: ห้องขังปรสิต",
+        location: "Mind Flayer Ship - Pod Room",
+        desc: "คุณลืมตาตื่นขึ้นมาด้วยอาการปวดหัวอย่างรุนแรง ในหัวของคุณรู้สึกถึงหนอนปรสิต (Tadpole) กำลังคืบคลานอยู่เบื้องหลังกระบอกตาคุณ รอบตัวคือแคปซูลแก้วอินทรีย์ของเอเลี่ยน Mind Flayer และมีร่างเหยื่อผู้เคราะห์ร้ายอีกรายติดอยู่ใน pod ใกล้ๆ ตัวเครื่องส่งเสียงสั่นสะเทือนเตือนความร้อนสูงของการชน คุณต้องหาทางออกไป!",
+        options: [
+            { text: "🔍 สำรวจรอบๆ ห้องและแผงอุปกรณ์", next: "explore_pod" },
+            { text: "🖥️ [ARCANA] ตรวจสอบแผงสวิตช์ควบคุมปรสิตบนคอนโซลกลาง", check: { type: "INT", stat: "int", dc: 10, success: "console_success", fail: "console_fail" } },
+            { text: "🛡️ [ATHLETICS] ใช้พละกำลังพยายามทุบพังแคปซูลของเหยื่อรายข้างๆ เพื่อช่วยเหลือ", check: { type: "STR", stat: "str", dc: 12, success: "save_shadowheart_success", fail: "save_shadowheart_fail" } },
+            { text: "🚪 เปิดประตูบานใหญ่ออกไปสู่โถงทางเดินหลัก", next: "enter_hallway" }
+        ]
+    },
+    explore_pod: {
+        title: "ยานบิน NAUTILOID: สแกนห้อง",
+        location: "Mind Flayer Ship - Pod Room",
+        desc: "คุณเดินสำรวจแผงสิ่งมีชีวิตอินทรีย์ บนแท่นหินใกล้ๆ คุณพบดาบรูนเรืองแสงสีฟ้าอ่อนและขวดยาสีแดงใสที่มีพลังงานรักษาไหลเวียนอยู่",
+        options: [
+            { text: "🗡️ หยิบดาบรูนและยาฟื้นฟู (Loot Items)", action: (p) => {
+                p.inventory.push("ดาบรูน (Rune Blade)", "ยาฟื้นฟู (Potion of Healing)");
+                logGameMsg("หยิบ ดาบรูน (Rune Blade) และ ยาฟื้นฟู (Potion of Healing) เข้ากระเป๋าเรียบร้อย!", "system");
+                updateDndHud();
+            }, next: "pod_room" },
+            { text: "🔙 กลับไปยังจุดศูนย์กลางห้อง", next: "pod_room" }
+        ]
+    },
+    console_success: {
+        title: "ยานบิน NAUTILOID: ปลดล็อคระบบ",
+        location: "Mind Flayer Ship - Pod Room",
+        desc: "ความรู้ด้านเวทมนตร์และโครงสร้างสิ่งมีชีวิตต่างดาวของคุณช่วยให้เข้าใจสัญญาณประสาท คอนโซลทำงาน แคปซูลของเหยื่อสาวเปิดออก! เธอคือ 'Shadowheart' นักบวชสาวผู้ถือสิ่งประดิษฐ์ทรงกลมลึกลับ เธอรีบออกมาและขอบคุณคุณพร้อมร่วมผจญภัยหนีไปด้วยกัน!",
+        options: [
+            { text: "🤝 พา Shadowheart ร่วมเดินทางและเตรียมออกทางเดินหลัก", action: (p) => {
+                dndCompanion = { name: "Shadowheart", hp: 10, maxHp: 10, class: "cleric" };
+                logGameMsg("Shadowheart เข้าร่วมทีมเป็นผู้ติดตามของคุณ!", "system");
+                updateDndHud();
+            }, next: "enter_hallway" }
+        ]
+    },
+    console_fail: {
+        title: "ยานบิน NAUTILOID: ระบบช็อต",
+        location: "Mind Flayer Ship - Pod Room",
+        desc: "คุณกดปุ่มผิดพลาด คอนโซลส่งกระแสไฟฟ้าแรงสูงย้อนกลับมาทำร้ายคุณ! แคปซูลข้างๆ เกิดควันดำท่วมหน้ากากล็อคสนิทกว่าเดิม และคุณได้รับความเสียหายชั่วคราว",
+        options: [
+            { text: "🤕 พยายามประคองตัวขึ้นมาและเลือกเส้นทางใหม่", action: (p) => {
+                p.hp = Math.max(1, p.hp - 2);
+                logGameMsg("คุณได้รับความเสียหาย 2 HP จากไฟช็อตของแผงคอนโซล!", "system-fail");
+                updateDndHud();
+            }, next: "pod_room" }
+        ]
+    },
+    save_shadowheart_success: {
+        title: "ยานบิน NAUTILOID: พลังนักรบ",
+        location: "Mind Flayer Ship - Pod Room",
+        desc: "คุณใช้แรงบีบกระแทกแก้วแกนกลางจนแตกร้าว บานพับอินทรีย์เปิดออก เผยร่างของ 'Shadowheart' ที่รีบคลานออกมารอบกอดดาบของเธอด้วยความโล่งใจ เธอขอบคุณในความกล้าหาญของคุณและพร้อมเป็นโล่ป้องกันภัยร่วมเดินทางไปข้างหน้า!",
+        options: [
+            { text: "🤝 ชวน Shadowheart เดินทางออกจากห้อง", action: (p) => {
+                dndCompanion = { name: "Shadowheart", hp: 10, maxHp: 10, class: "cleric" };
+                logGameMsg("Shadowheart เข้าร่วมทีมในฐานะ Cleric คอยสนับสนุน!", "system");
+                updateDndHud();
+            }, next: "enter_hallway" }
+        ]
+    },
+    save_shadowheart_fail: {
+        title: "ยานบิน NAUTILOID: ทุบพังไร้ผล",
+        location: "Mind Flayer Ship - Pod Room",
+        desc: "คุณพยายามออกแรงกระแทกเต็มที่ แต่ฝาครอบแคปซูลแกร่งเกินไป แขนของคุณชาและเหนื่อยล้าไปชั่วขณะโดยช่วยเธอไม่ได้",
+        options: [
+            { text: "🔙 ยอมแพ้แล้วมองหาตัวช่วยอื่นในห้อง", next: "pod_room" }
+        ]
+    },
+    enter_hallway: {
+        title: "ยานบิน NAUTILOID: โถงทางเดินหลัก",
+        location: "Mind Flayer Ship - Hallway",
+        desc: "เมื่อคุณก้าวเท้าเข้าสู่โถงทางเดินที่สร้างจากเนื้อเยื่อเอเลี่ยนสั่นไหว ทันใดนั้นมีร่างของปีศาจสมองเดินสี่ขา 'Intellect Devourer' กระโดดลงมาจากเพดานขวางทางคุณ! นัยน์ตาของมันไม่มี มีเพียงรอยหยักสมองที่สั่นกริ่ง มันขู่ฟ่อพร้อมเตรียมกระโจนเข้าจู่โจมคุณ!",
+        options: [
+            { text: "⚔️ เข้าสู่ระบบการต่อสู้! (Initiate Combat)", action: (p) => {
+                triggerCombat("Intellect Devourer", 14, 11);
+            } }
+        ]
+    },
+    combat_victory: {
+        title: "ยานบิน NAUTILOID: ชัยชนะแรก",
+        location: "Mind Flayer Ship - Hallway",
+        desc: "ร่างปีศาจสมองล้มลงชักกระตุกก่อนแน่นิ่งไป คุณสะบัดเลือดออกจากอาวุธและพบกองเศษวัสดุนายหน้าต่างดาว ในซากของมันมี 'ยาสมานแผลโบราณ (Elixir of Health)' ตกอยู่ ทางเดินขึ้นสู่ห้องควบคุมหลัก (Helm) เปิดออกแล้ว!",
+        options: [
+            { text: "🎒 ค้นตัวศัตรูและเตรียมตัวมุ่งหน้าสู่ห้องควบคุม", action: (p) => {
+                p.inventory.push("ยาสมานแผลโบราณ (Elixir of Health)");
+                logGameMsg("ได้รับ ยาสมานแผลโบราณ เข้าคลังเก็บของ!", "system");
+                updateDndHud();
+            }, next: "helm_escape" }
+        ]
+    },
+    helm_escape: {
+        title: "ยานบิน NAUTILOID: ห้องควบคุมคอนเนคเตอร์",
+        location: "Mind Flayer Ship - The Helm",
+        desc: "คุณก้าวเข้ามาในห้องบังคับการ (The Helm) ทั่วทั้งห้องกำลังตกอยู่ในสงคราม! ปีศาจไฟ Cambion กำลังปะทะกับ Mind Flayer ยักษ์ เสียงระเบิดและเปลวไฟแลบแดงฉาน ทรานสปอนเดอร์ (Transponder) สีม่วงสำหรับวาร์ปยานเชื่อมต่ออยู่ปลายสุดของสะพานเดิน คุณต้องฝ่าไปกดสวิตช์ก่อนยานจะระเบิด!",
+        options: [
+            { text: "🏃 [ATHLETICS] พุ่งตัวปีนข้ามซากปรักหักพังตรงไปยังปุ่มกด", check: { type: "STR", stat: "str", dc: 11, success: "escape_win", fail: "escape_fail" } },
+            { text: "🏹 [STEALTH] แอบย่องเลี่ยงการสังเกตของปีศาจไฟผ่านมุมมืด", check: { type: "DEX", stat: "dex", dc: 13, success: "escape_win", fail: "escape_fail" } },
+            { text: "🔮 [ARCANA] ปล่อยคลื่นพลังดึงดูดปุ่มกดจากระยะไกล (สำหรับจอมเวทย์)", check: { type: "INT", stat: "int", dc: 12, success: "escape_win", fail: "escape_fail" } }
+        ]
+    },
+    escape_win: {
+        title: "FAERÛN: หาดทรายระทม",
+        location: "Ravaged Beach",
+        desc: "คุณคว้าสายเชื่อมประสาททรานสปอนเดอร์ได้ทันเวลาและเสียบเข้าสมองควบคุมกลาง! ยานเกิดแสงสว่างวาร์ปข้ามมิติหักพังตกลงมาจากฟ้า และกระแทกเข้ากับชายฝั่งแม่น้ำ Chionthar... คุณตื่นขึ้นมาบนหาดทรายขาวละเอียด แสงแดดส่องสว่าง มีเสียงนกร้อง หนอนปรสิตในหัวคุณสงบลงชั่วคราว คุณรอดชีวิตจากขุมนรกได้แล้ว! ยินดีด้วยคุณผ่านเนื้อเรื่องช่วงแรกของ Baldur's Gate 3!",
+        options: [
+            { text: "🎉 จบการเดินทางช่วงทดสอบ (เริ่มสร้างตัวละครใหม่)", action: (p) => {
+                logGameMsg("จบเกมแล้ว! คุณผ่านการผจญภัยช่วงเริ่มต้นและรอดชีวิตสู่ Faerûn ได้สำเร็จ!", "system");
+            }, next: "character_reset" }
+        ]
+    },
+    escape_fail: {
+        title: "ยานบิน NAUTILOID: โดนไฟคลอก",
+        location: "Mind Flayer Ship - The Helm",
+        desc: "คุณเสียหลักก้าวพลาดจากแรงระเบิด ปีศาจหันมาปล่อยลูกไฟใส่คุณเต็มอก! เสื้อผ้าลุกไหม้และร่างของคุณกระเด็นตกสะพาน",
+        options: [
+            { text: "🔥 รักษาสมาธิและพยายามฝืนกด Transponder ให้ได้อีกครั้ง", action: (p) => {
+                p.hp = Math.max(1, p.hp - 5);
+                logGameMsg("คุณถูกเปลวไฟคลอก ได้รับความเสียหาย 5 HP!", "system-fail");
+                updateDndHud();
+            }, next: "helm_escape" }
+        ]
+    }
+};
+
+// Initial Setup
+function initDndEngine() {
+    if (dndIsInitialized) return;
+    dndIsInitialized = true;
+    
+    // Bind Point buy increment buttons
+    document.querySelectorAll(".dnd-btn-adjust").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            const stat = e.currentTarget.getAttribute("data-stat");
+            const isPlus = e.currentTarget.classList.contains("plus");
+            adjustStatPointBuy(stat, isPlus);
+        });
+    });
+
+    // Bind Race Selection Pills
+    document.querySelectorAll(".dnd-race-select-grid .dnd-select-pill").forEach(pill => {
+        pill.addEventListener("click", (e) => {
+            document.querySelectorAll(".dnd-race-select-grid .dnd-select-pill").forEach(p => p.classList.remove("active"));
+            e.currentTarget.classList.add("active");
+            dndPlayer.race = e.currentTarget.getAttribute("data-race");
+        });
+    });
+
+    // Bind Class Selection Pills
+    document.querySelectorAll(".dnd-class-select-grid .dnd-class-pill").forEach(pill => {
+        pill.addEventListener("click", (e) => {
+            document.querySelectorAll(".dnd-class-select-grid .dnd-class-pill").forEach(p => p.classList.remove("active"));
+            e.currentTarget.classList.add("active");
+            dndPlayer.class = e.currentTarget.getAttribute("data-class");
+        });
+    });
+
+    // Bind Start Button
+    document.getElementById("dnd-start-btn").addEventListener("click", startDndGame);
+
+    // Bind Custom Action Input Button
+    document.getElementById("dnd-custom-action-btn").addEventListener("click", submitCustomDndAction);
+    document.getElementById("dnd-custom-action-input").addEventListener("keypress", (e) => {
+        if (e.key === "Enter") submitCustomDndAction();
+    });
+
+    // Dice overlay rolling triggers
+    document.getElementById("dnd-roll-btn").addEventListener("click", executeD20DiceRoll);
+
+    // Initial character score UI refresh
+    refreshPointBuyUi();
+}
+
+// Adjust Point-Buy Ability Scores
+function adjustStatPointBuy(stat, isPlus) {
+    let currentScore = dndPlayer.scores[stat];
+    
+    if (isPlus) {
+        if (dndPointPool > 0 && currentScore < 15) {
+            dndPlayer.scores[stat]++;
+            dndPointPool--;
+        }
+    } else {
+        if (currentScore > 8) {
+            dndPlayer.scores[stat]--;
+            dndPointPool++;
+        }
+    }
+    refreshPointBuyUi();
+}
+
+// Refresh point allocation visual scores
+function refreshPointBuyUi() {
+    document.getElementById("dnd-pointbuy-pool").innerText = `แต้มคงเหลือ: ${dndPointPool}`;
+    
+    for (const stat in dndPlayer.scores) {
+        const val = dndPlayer.scores[stat];
+        const modifier = Math.floor((val - 10) / 2);
+        
+        document.getElementById(`val-${stat}`).innerText = val;
+        
+        const modSign = modifier >= 0 ? `+${modifier}` : modifier;
+        const modEl = document.getElementById(`mod-${stat}`);
+        modEl.innerText = modSign;
+        modEl.style.color = modifier >= 0 ? "#10b981" : "#ef4444";
+        
+        // Save values in main player state
+        dndPlayer.mods[stat] = modifier;
+    }
+}
+
+// Start Adventure Game Sequence
+function startDndGame() {
+    const nameInput = document.getElementById("dnd-char-name").value.trim();
+    dndPlayer.name = nameInput || "Tav";
+    
+    // Apply Race Attributes Bonuses
+    if (dndPlayer.race === "human") {
+        for (const stat in dndPlayer.scores) dndPlayer.scores[stat] += 1;
+    } else if (dndPlayer.race === "elf") {
+        dndPlayer.scores.dex += 2;
+        dndPlayer.scores.int += 1;
+    } else if (dndPlayer.race === "dwarf") {
+        dndPlayer.scores.con += 2;
+        dndPlayer.scores.str += 1;
+    } else if (dndPlayer.race === "tiefling") {
+        dndPlayer.scores.cha += 2;
+        dndPlayer.scores.int += 1;
+    } else if (dndPlayer.race === "githyanki") {
+        dndPlayer.scores.str += 2;
+        dndPlayer.scores.int += 1;
+    }
+
+    // Recompute Mods after Race selection
+    for (const stat in dndPlayer.scores) {
+        dndPlayer.mods[stat] = Math.floor((dndPlayer.scores[stat] - 10) / 2);
+    }
+
+    // Adjust Initial HP & AC based on class selections
+    if (dndPlayer.class === "fighter") {
+        dndPlayer.maxHp = 12 + dndPlayer.mods.con;
+        dndPlayer.ac = 16;
+    } else if (dndPlayer.class === "wizard") {
+        dndPlayer.maxHp = 6 + dndPlayer.mods.con;
+        dndPlayer.ac = 12 + dndPlayer.mods.dex;
+        dndPlayer.spellSlotsMax = 2;
+        dndPlayer.spellSlots = 2;
+    } else if (dndPlayer.class === "rogue") {
+        dndPlayer.maxHp = 8 + dndPlayer.mods.con;
+        dndPlayer.ac = 14 + dndPlayer.mods.dex;
+    } else if (dndPlayer.class === "cleric") {
+        dndPlayer.maxHp = 10 + dndPlayer.mods.con;
+        dndPlayer.ac = 15;
+        dndPlayer.spellSlotsMax = 2;
+        dndPlayer.spellSlots = 2;
+    }
+
+    dndPlayer.hp = dndPlayer.maxHp;
+    dndPlayer.inventory = ["เสบียงยังชีพ (Rations)", "ตะเกียงเวทย์ (Torch)"];
+
+    // Transition Creator to gameplay panel
+    document.getElementById("dnd-char-creator").classList.add("hidden");
+    document.getElementById("dnd-game-panel").classList.remove("hidden");
+
+    // Init HUD
+    updateDndHud();
+    
+    // Clear Narrative log
+    const log = document.getElementById("dnd-log");
+    log.innerHTML = "";
+    
+    // Load first room scene
+    dndCurrentSceneId = "pod_room";
+    loadDndScene(dndCurrentSceneId);
+}
+
+// Update character status HUD visual
+function updateDndHud() {
+    document.getElementById("hud-char-name").innerText = dndPlayer.name;
+    document.getElementById("dnd-char-avatar").innerText = dndPlayer.name.substring(0, 2);
+    document.getElementById("hud-char-meta").innerText = `ระดับ ${dndPlayer.level} ${dndPlayer.race.toUpperCase()} ${dndPlayer.class.toUpperCase()}`;
+    
+    document.getElementById("hud-char-hp-txt").innerText = `${dndPlayer.hp} / ${dndPlayer.maxHp}`;
+    
+    const pct = (dndPlayer.hp / dndPlayer.maxHp) * 100;
+    const hpBar = document.getElementById("hud-char-hp-bar");
+    hpBar.style.width = `${pct}%`;
+    
+    // Low HP Warning Flash effect
+    const sidebarCard = hpBar.closest(".egat-card");
+    if (pct <= 30) {
+        sidebarCard.classList.add("hp-critical");
+    } else {
+        sidebarCard.classList.remove("hp-critical");
+    }
+
+    // Refresh Scores HUD
+    for (const stat in dndPlayer.scores) {
+        const val = dndPlayer.scores[stat];
+        const modifier = dndPlayer.mods[stat];
+        const sign = modifier >= 0 ? `+${modifier}` : modifier;
+        document.getElementById(`hud-val-${stat}`).innerText = `${val} (${sign})`;
+    }
+
+    document.getElementById("hud-char-ac").innerText = dndPlayer.ac;
+
+    // Show Spell slots if applicable
+    const spellSlotsBox = document.getElementById("hud-spellslots-container");
+    if (dndPlayer.spellSlotsMax > 0) {
+        spellSlotsBox.classList.remove("hidden");
+        const starsEl = document.getElementById("hud-spellslots-stars");
+        starsEl.innerHTML = "";
+        for (let i = 0; i < dndPlayer.spellSlotsMax; i++) {
+            const star = document.createElement("span");
+            star.innerText = i < dndPlayer.spellSlots ? "🔮" : "⚫";
+            starsEl.appendChild(star);
+        }
+    } else {
+        spellSlotsBox.classList.add("hidden");
+    }
+
+    // Load inventory grids
+    const invGrid = document.getElementById("hud-inventory");
+    invGrid.innerHTML = "";
+    const itemsCount = Math.max(8, dndPlayer.inventory.length);
+    
+    for (let i = 0; i < itemsCount; i++) {
+        const item = dndPlayer.inventory[i];
+        const slot = document.createElement("div");
+        slot.className = "inv-slot";
+        slot.setAttribute("style", "aspect-ratio: 1; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; justify-content: center; font-size: 1.1rem;");
+        
+        if (item) {
+            slot.classList.add("filled");
+            // Set simple matching icons
+            let emoji = "📦";
+            if (item.includes("ดาบ")) emoji = "🗡️";
+            else if (item.includes("ยา")) emoji = "🧪";
+            else if (item.includes("ขวาน")) emoji = "🪓";
+            else if (item.includes("หนังสือ")) emoji = "📜";
+            
+            slot.innerText = emoji;
+            slot.title = item;
+            
+            // Allow double click to use items
+            slot.addEventListener("click", () => {
+                if (item.includes("ยาฟื้นฟู") || item.includes("ยาสมานแผล")) {
+                    useDndHealingPotion(item);
+                }
+            });
+        }
+        invGrid.appendChild(slot);
+    }
+}
+
+// Drink healing potion
+function useDndHealingPotion(itemName) {
+    if (dndPlayer.hp >= dndPlayer.maxHp) {
+        logGameMsg("พลังชีวิตของคุณเต็มอยู่แล้ว ไม่จำเป็นต้องทานยานี้!", "system");
+        return;
+    }
+    
+    const idx = dndPlayer.inventory.indexOf(itemName);
+    if (idx > -1) {
+        dndPlayer.inventory.splice(idx, 1);
+        const heal = Math.floor(Math.random() * 6) + Math.floor(Math.random() * 6) + 4; // 2d6+4
+        dndPlayer.hp = Math.min(dndPlayer.maxHp, dndPlayer.hp + heal);
+        logGameMsg(`🧪 ดื่ม ${itemName} ฟื้นฟูพลังชีวิตได้รับ +${heal} HP!`, "system");
+        updateDndHud();
+        
+        // If combat is active, trigger enemy turn
+        if (dndActiveEnemy) {
+            setTimeout(enemyCombatTurn, 1000);
+        }
+    }
+}
+
+// Log game master dialogue messages
+function logGameMsg(text, type = "gm") {
+    const log = document.getElementById("dnd-log");
+    if (!log) return;
+
+    const entry = document.createElement("div");
+    entry.className = `dnd-msg ${type}`;
+    
+    if (type === "player") {
+        entry.innerHTML = `<span><strong>🗣️ ${dndPlayer.name}:</strong> ${text}</span>`;
+    } else if (type === "system") {
+        entry.innerHTML = `<span><strong>🎲 SYSTEM:</strong> ${text}</span>`;
+    } else if (type === "system-fail") {
+        entry.innerHTML = `<span><strong>💀 SYSTEM:</strong> ${text}</span>`;
+    } else {
+        entry.innerHTML = `<span><strong>📖 Game Master:</strong> ${text}</span>`;
+    }
+
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+}
+
+// Load narrative step scene
+function loadDndScene(sceneId) {
+    if (sceneId === "character_reset") {
+        // Soft reset character creator
+        dndPointPool = 27;
+        dndPlayer.scores = { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 };
+        dndCompanion = null;
+        dndActiveEnemy = null;
+        refreshPointBuyUi();
+        document.getElementById("dnd-game-panel").classList.add("hidden");
+        document.getElementById("dnd-char-creator").classList.remove("hidden");
+        return;
+    }
+
+    dndCurrentSceneId = sceneId;
+    const scene = dndAdventureStory[sceneId];
+    if (!scene) return;
+
+    document.getElementById("dnd-scene-title").innerText = scene.title;
+    document.getElementById("dnd-scene-location").innerText = scene.location;
+    
+    // Narrate scene
+    logGameMsg(scene.desc, "gm");
+
+    // Populate options
+    const optionsContainer = document.getElementById("dnd-options");
+    optionsContainer.innerHTML = "";
+
+    scene.options.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.className = "dnd-choice-btn";
+        btn.innerText = opt.text;
+        
+        btn.addEventListener("click", () => {
+            // Apply choice side-effect action if present
+            if (opt.action) opt.action(dndPlayer);
+
+            if (opt.check) {
+                // Trigger Dice Roll Check screen
+                triggerD20Check(opt.text, opt.check);
+            } else if (opt.next) {
+                loadDndScene(opt.next);
+            }
+        });
+        optionsContainer.appendChild(btn);
+    });
+}
+
+// Active Dice Roll Configurations
+let activeDndCheck = null;
+
+// Trigger dice roll overlay modal
+function triggerD20Check(actionTitle, checkConfig) {
+    activeDndCheck = checkConfig;
+    
+    const overlay = document.getElementById("dnd-dice-overlay");
+    const titleEl = document.getElementById("dnd-check-title");
+    const dcEl = document.getElementById("dnd-check-dc");
+    const modLabel = document.getElementById("dnd-roll-mod-label");
+    const modVal = document.getElementById("dnd-roll-mod-val");
+
+    titleEl.innerText = actionTitle.toUpperCase();
+    dcEl.innerText = `ความยากเป้าหมาย (Target DC): ${checkConfig.dc}`;
+
+    const statName = checkConfig.stat;
+    const modifier = dndPlayer.mods[statName] || 0;
+    
+    modLabel.innerText = `โบนัสทักษะ [${checkConfig.type} Modifier]:`;
+    modVal.innerText = modifier >= 0 ? `+${modifier}` : modifier;
+    modVal.style.color = modifier >= 0 ? "#10b981" : "#ef4444";
+
+    // Reset fields
+    document.getElementById("dnd-roll-base").innerText = "-";
+    document.getElementById("dnd-roll-total").innerText = "-";
+    document.getElementById("dnd-d20-number").innerText = "20";
+    document.getElementById("dnd-dice-result-panel").classList.add("hidden");
+    
+    const rollBtn = document.getElementById("dnd-roll-btn");
+    rollBtn.disabled = false;
+    rollBtn.style.opacity = "1";
+
+    // Show Overlay
+    overlay.classList.remove("hidden");
+}
+
+// Spin and roll dice sequence
+function executeD20DiceRoll() {
+    const rollBtn = document.getElementById("dnd-roll-btn");
+    rollBtn.disabled = true;
+    rollBtn.style.opacity = "0.5";
+
+    const svg = document.getElementById("dnd-d20-svg");
+    svg.classList.add("dice-rolling");
+
+    const numberEl = document.getElementById("dnd-d20-number");
+    
+    // Flashing numbers animation
+    let cycles = 0;
+    const interval = setInterval(() => {
+        numberEl.innerText = Math.floor(Math.random() * 20) + 1;
+        cycles++;
+        if (cycles > 16) {
+            clearInterval(interval);
+            finishDiceRoll();
+        }
+    }, 60);
+}
+
+// Complete the D20 roll calculations
+function finishDiceRoll() {
+    const svg = document.getElementById("dnd-d20-svg");
+    svg.classList.remove("dice-rolling");
+
+    const baseRoll = Math.floor(Math.random() * 20) + 1;
+    const numberEl = document.getElementById("dnd-d20-number");
+    numberEl.innerText = baseRoll;
+
+    const modifier = dndPlayer.mods[activeDndCheck.stat] || 0;
+    const total = baseRoll + modifier;
+
+    document.getElementById("dnd-roll-base").innerText = baseRoll;
+    document.getElementById("dnd-roll-total").innerText = total;
+
+    const resultPanel = document.getElementById("dnd-dice-result-panel");
+    resultPanel.classList.remove("hidden");
+
+    const success = (total >= activeDndCheck.dc) || (baseRoll === 20); // 20 is Natural Critical Success!
+    
+    if (success) {
+        resultPanel.innerText = baseRoll === 20 ? "🔥 CRITICAL SUCCESS 🎉" : "✨ SUCCESS (ความสำเร็จ) 🎉";
+        resultPanel.style.background = "rgba(16, 185, 129, 0.9)";
+        resultPanel.style.border = "1.5px solid #10b981";
+        resultPanel.style.color = "#fff";
+        
+        setTimeout(() => {
+            document.getElementById("dnd-dice-overlay").classList.add("hidden");
+            loadDndScene(activeDndCheck.success);
+        }, 2200);
+    } else {
+        resultPanel.innerText = baseRoll === 1 ? "💀 CRITICAL FAILURE 💀" : "❌ FAILURE (ล้มเหลว) 💀";
+        resultPanel.style.background = "rgba(239, 68, 68, 0.9)";
+        resultPanel.style.border = "1.5px solid #ef4444";
+        resultPanel.style.color = "#fff";
+        
+        // Shake screen on failure
+        document.getElementById("dnd-dice-card").classList.add("shake-panel");
+        setTimeout(() => {
+            document.getElementById("dnd-dice-card").classList.remove("shake-panel");
+        }, 500);
+
+        setTimeout(() => {
+            document.getElementById("dnd-dice-overlay").classList.add("hidden");
+            loadDndScene(activeDndCheck.fail);
+        }, 2200);
+    }
+}
+
+// Free Action Submit Parser
+function submitCustomDndAction() {
+    const inputEl = document.getElementById("dnd-custom-action-input");
+    const actText = inputEl.value.trim();
+    if (!actText) return;
+
+    inputEl.value = "";
+    
+    // Log player action
+    logGameMsg(actText, "player");
+
+    // Process action keywords
+    const lower = actText.toLowerCase();
+    
+    // 1. Attack Actions
+    if (lower.includes("ฟัน") || lower.includes("ตี") || lower.includes("โจมตี") || lower.includes("ฆ่า") || lower.includes("attack") || lower.includes("fight")) {
+        if (dndActiveEnemy) {
+            executePlayerAttack();
+        } else {
+            logGameMsg("ไม่มีศัตรูในบริเวณนี้ให้คุณโจมตี! คุณฟันดาบใส่อากาศอย่างว่างเปล่า", "gm");
+        }
+        return;
+    }
+    
+    // 2. Heal / Drink Action
+    if (lower.includes("กินยา") || lower.includes("รักษา") || lower.includes("ฮีล") || lower.includes("ดื่มยา") || lower.includes("heal") || lower.includes("potion") || lower.includes("use potion")) {
+        const potionName = dndPlayer.inventory.find(i => i.includes("ยา"));
+        if (potionName) {
+            useDndHealingPotion(potionName);
+        } else {
+            logGameMsg("คุณไม่มีขวดยาเหลือในสัมภาระ!", "gm");
+        }
+        return;
+    }
+
+    // 3. Search / Loot
+    if (lower.includes("เก็บ") || lower.includes("ค้น") || lower.includes("สำรวจ") || lower.includes("หยิบ") || lower.includes("search") || lower.includes("loot") || lower.includes("take")) {
+        if (dndCurrentSceneId === "pod_room") {
+            loadDndScene("explore_pod");
+        } else {
+            logGameMsg("คุณมองไปรอบๆ ค้นหาตอกซอกซอยแต่ไม่พบสิ่งใดที่หยิบจับได้เพิ่มเติมในขณะนี้", "gm");
+        }
+        return;
+    }
+
+    // 4. Fallback Universal D20 custom roll check
+    const randomDC = Math.floor(Math.random() * 5) + 10; // Random DC between 10 and 14
+    const stats = ["str", "dex", "int", "wis", "cha"];
+    const randStat = stats[Math.floor(Math.random() * stats.length)];
+    const types = { str: "STR", dex: "DEX", int: "INT", wis: "WIS", cha: "CHA" };
+
+    logGameMsg(`GM ทำการตรวจสอบเจตจำนงในการกระทำของคุณ... [ต้องทอยเต๋าตัดสิน DC ${randomDC}]`, "gm");
+
+    setTimeout(() => {
+        triggerD20Check(actText, {
+            type: types[randStat],
+            stat: randStat,
+            dc: randomDC,
+            success: dndCurrentSceneId, // Returns to current scene but adds positive outcome
+            fail: dndCurrentSceneId
+        });
+        
+        // Override callbacks once for custom narrative resolution
+        activeDndCheck.success = () => {
+            logGameMsg(`🎉 คุณทำการกระทำ "${actText}" สำเร็จลุล่วงอย่างงดงามตามความประสงค์!`, "system");
+            if (dndActiveEnemy) {
+                // If in combat, enemy takes minor damage from cool action
+                const dmg = Math.floor(Math.random() * 4) + 2;
+                dndActiveEnemy.hp = Math.max(0, dndActiveEnemy.hp - dmg);
+                logGameMsg(`ศัตรูประหลาดใจ เสียหลักได้รับความเสียหาย ${dmg} HP จากการกระทำคาดไม่ถึงของคุณ!`, "gm");
+                updateCombatStatus();
+            }
+            loadDndScene(dndCurrentSceneId);
+        };
+        activeDndCheck.fail = () => {
+            logGameMsg(`💀 การกระทำ "${actText}" ล้มเหลว! คุณเสียจังหวะเกือบสะดุดล้มลงกองกับพื้น`, "system-fail");
+            dndPlayer.hp = Math.max(1, dndPlayer.hp - 1);
+            updateDndHud();
+            loadDndScene(dndCurrentSceneId);
+        };
+    }, 800);
+}
+
+// Initiate turn-based combat encounter
+function triggerCombat(enemyName, maxHp, ac) {
+    dndActiveEnemy = { name: enemyName, hp: maxHp, maxHp: maxHp, ac: ac };
+    
+    document.getElementById("dnd-enemy-name").innerText = enemyName;
+    document.getElementById("dnd-enemy-ac").innerText = `AC ${ac}`;
+    document.getElementById("dnd-combat-card").classList.remove("hidden");
+    
+    logGameMsg(`⚠️ เริ่มต้นการต่อสู้กับ ${enemyName}! เตรียมตัวทอดเต๋าโจมตี`, "system");
+
+    updateCombatStatus();
+    loadCombatTurnOptions();
+}
+
+// Update Combat Side panel bars
+function updateCombatStatus() {
+    if (!dndActiveEnemy) return;
+
+    document.getElementById("dnd-enemy-hp-txt").innerText = `${dndActiveEnemy.hp} / ${dndActiveEnemy.maxHp} HP`;
+    const pct = (dndActiveEnemy.hp / dndActiveEnemy.maxHp) * 100;
+    document.getElementById("dnd-enemy-hp-bar").style.width = `${pct}%`;
+
+    // Shake enemy card on hit
+    const enemyCard = document.getElementById("dnd-combat-card");
+    enemyCard.classList.add("shake-panel");
+    setTimeout(() => {
+        enemyCard.classList.remove("shake-panel");
+    }, 400);
+
+    if (dndActiveEnemy.hp <= 0) {
+        // Combat victory
+        logGameMsg(`🎉 คุณเอาชนะ ${dndActiveEnemy.name} ได้สำเร็จ! การต่อสิ้นสุดลง`, "system");
+        document.getElementById("dnd-combat-card").classList.add("hidden");
+        dndActiveEnemy = null;
+        loadDndScene("combat_victory");
+    }
+}
+
+// Load combat action button options
+function loadCombatTurnOptions() {
+    const optionsContainer = document.getElementById("dnd-options");
+    optionsContainer.innerHTML = "";
+
+    // Choice A: Standard Weapon Attack
+    const btnAttack = document.createElement("button");
+    btnAttack.className = "dnd-choice-btn";
+    btnAttack.style.borderColor = "rgba(239, 68, 68, 0.4)";
+    btnAttack.style.color = "#fca5a5";
+    
+    // Weapon display name depending on class
+    let attackText = "⚔️ ทอดเต๋าโจมตีด้วยอาวุธ (Attack Roll)";
+    if (dndPlayer.class === "rogue") attackText = "🗡️ ลอบจู่โจมจุดอ่อน (Sneak Attack Roll)";
+    btnAttack.innerText = attackText;
+    
+    btnAttack.addEventListener("click", () => {
+        // Trigger Attack Check vs Enemy AC
+        triggerD20Check("Weapon Attack Roll", {
+            type: dndPlayer.class === "rogue" ? "DEX" : "STR",
+            stat: dndPlayer.class === "rogue" ? "dex" : "str",
+            dc: dndActiveEnemy.ac,
+            success: dndCurrentSceneId,
+            fail: dndCurrentSceneId
+        });
+
+        // Resolve attack callbacks
+        activeDndCheck.success = () => {
+            const dmgBonus = dndPlayer.class === "rogue" ? dndPlayer.mods.dex : dndPlayer.mods.str;
+            const weaponRoll = Math.floor(Math.random() * 8) + 1; // 1d8
+            const totalDmg = Math.max(1, weaponRoll + dmgBonus);
+            
+            dndActiveEnemy.hp = Math.max(0, dndActiveEnemy.hp - totalDmg);
+            logGameMsg(`💥 โจมตีสำเร็จ! ทอดแต้มดาเมจได้ ${weaponRoll} (โบนัส ${dmgBonus}) ➡️ สร้างความเสียหาย ${totalDmg} HP ให้กับ ${dndActiveEnemy.name}!`, "system");
+            
+            // Show floating damage popup effect
+            createFloatingDamageEffect(totalDmg);
+            updateCombatStatus();
+
+            if (dndActiveEnemy) {
+                setTimeout(enemyCombatTurn, 1200);
+            }
+        };
+        activeDndCheck.fail = () => {
+            logGameMsg(`🛡️ ทอยแต้มได้ไม่พ้นเกราะ (AC ${dndActiveEnemy.ac}) ของศัตรู การโจมตีพลาดเป้าอย่างน่าเสียดาย!`, "system-fail");
+            setTimeout(enemyCombatTurn, 1200);
+        };
+    });
+    optionsContainer.appendChild(btnAttack);
+
+    // Choice B: Cast Spell
+    if (dndPlayer.spellSlotsMax > 0) {
+        const btnSpell = document.createElement("button");
+        btnSpell.className = "dnd-choice-btn";
+        btnSpell.style.borderColor = "rgba(168, 85, 247, 0.4)";
+        btnSpell.style.color = "#c084fc";
+        
+        let spellName = "Magic Missile (ลูกศรมนตรา)";
+        if (dndPlayer.class === "cleric") spellName = "Guiding Bolt (ลำแสงสัจจะ)";
+        btnSpell.innerText = `🔮 ร่ายเวทย์: ${spellName} (ต้องการ 1 สล็อต)`;
+
+        btnSpell.addEventListener("click", () => {
+            if (dndPlayer.spellSlots <= 0) {
+                logGameMsg("คุณไม่มีสล็อตเวทมนตร์เหลืออยู่ในเทิร์นนี้! ต้องใช้การโจมตีธรรมดาแทน", "system");
+                return;
+            }
+            
+            dndPlayer.spellSlots--;
+            updateDndHud();
+
+            if (dndPlayer.class === "wizard") {
+                // Magic missile hits automatically in D&D!
+                const spellDmg = Math.floor(Math.random() * 4) + Math.floor(Math.random() * 4) + Math.floor(Math.random() * 4) + 3; // 3d4+3
+                dndActiveEnemy.hp = Math.max(0, dndActiveEnemy.hp - spellDmg);
+                logGameMsg(`✨ ร่ายคาถา Magic Missile! ลูกศรประกายแสงสีม่วงพุ่งเข้าชนร่างศัตรูโดยตรงโดยไม่มีการพลาดเป้า ➡️ สร้างดาเมจ ${spellDmg} HP!`, "system");
+                createFloatingDamageEffect(spellDmg);
+                updateCombatStatus();
+                if (dndActiveEnemy) setTimeout(enemyCombatTurn, 1200);
+            } else {
+                // Guiding Bolt requires Spell Attack Check
+                triggerD20Check("Guiding Bolt Spell Attack", {
+                    type: "WIS",
+                    stat: "wis",
+                    dc: dndActiveEnemy.ac,
+                    success: dndCurrentSceneId,
+                    fail: dndCurrentSceneId
+                });
+
+                activeDndCheck.success = () => {
+                    const spellDmg = Math.floor(Math.random() * 6) + Math.floor(Math.random() * 6) + Math.floor(Math.random() * 6) + Math.floor(Math.random() * 6); // 4d6
+                    dndActiveEnemy.hp = Math.max(0, dndActiveEnemy.hp - spellDmg);
+                    logGameMsg(`✨ ลำแสง Guiding Bolt พุ่งชนเป้าหมายเข้ากลางหน้าอกกระแทกอย่างรุนแรง ➡️ สร้างดาเมจศักดิ์สิทธิ์ ${spellDmg} HP!`, "system");
+                    createFloatingDamageEffect(spellDmg);
+                    updateCombatStatus();
+                    if (dndActiveEnemy) setTimeout(enemyCombatTurn, 1200);
+                };
+                activeDndCheck.fail = () => {
+                    logGameMsg("🔮 ลำแสงเวทย์มนตร์บินเฉียดหูเป้าหมายและระเบิดเข้ากับเนื้อผนังข้างยาน!", "system-fail");
+                    if (dndActiveEnemy) setTimeout(enemyCombatTurn, 1200);
+                };
+            }
+        });
+        optionsContainer.appendChild(btnSpell);
+    }
+
+    // Choice C: Drink Potion if have
+    const hasPotion = dndPlayer.inventory.some(i => i.includes("ยา"));
+    if (hasPotion) {
+        const btnPot = document.createElement("button");
+        btnPot.className = "dnd-choice-btn";
+        btnPot.innerText = "🧪 ดื่มยาฟื้นฟูบาดแผล (Healing Potion)";
+        btnPot.addEventListener("click", () => {
+            const potionName = dndPlayer.inventory.find(i => i.includes("ยา"));
+            useDndHealingPotion(potionName);
+        });
+        optionsContainer.appendChild(btnPot);
+    }
+}
+
+// Enemy attacks player turn
+function enemyCombatTurn() {
+    if (!dndActiveEnemy) return;
+
+    logGameMsg(`⚔️ เทิร์นของ ${dndActiveEnemy.name}: เตรียมจู่โจมสวนกลับ!`, "system");
+
+    // Enemy attack roll
+    setTimeout(() => {
+        const roll = Math.floor(Math.random() * 20) + 1;
+        const total = roll + 2; // enemy attack modifier
+        logGameMsg(`${dndActiveEnemy.name} ทำการจู่โจมด้วยแต้มทอย ${roll} (+2) = ผลลัพธ์ ${total}`, "gm");
+
+        if (total >= dndPlayer.ac) {
+            const damage = Math.floor(Math.random() * 6) + 1; // 1d6 damage
+            dndPlayer.hp = Math.max(0, dndPlayer.hp - damage);
+            logGameMsg(`💥 ศัตรูโจมตีโดนคุณ! คุณได้รับความเสียหาย ${damage} HP`, "system-fail");
+            
+            // Screen Shake Effect
+            const gameCard = document.getElementById("dnd-game-panel");
+            gameCard.classList.add("shake-panel");
+            setTimeout(() => { gameCard.classList.remove("shake-panel"); }, 450);
+
+            updateDndHud();
+            
+            if (dndPlayer.hp <= 0) {
+                triggerDndGameOver();
+                return;
+            }
+        } else {
+            logGameMsg(`🛡️ การโจมตีติดโล่ป้องกัน/เกราะ (AC ${dndPlayer.ac}) ของคุณอย่างรอดพ้นหวุดหวิด!`, "system");
+        }
+
+        // Loop back options if still alive
+        if (dndActiveEnemy) {
+            loadCombatTurnOptions();
+        }
+    }, 1000);
+}
+
+// Floating Combat Text Damage Effect
+function createFloatingDamageEffect(val) {
+    const parent = document.getElementById("dnd-combat-card");
+    if (!parent) return;
+
+    const popup = document.createElement("div");
+    popup.className = "floating-damage";
+    popup.innerText = `-${val}`;
+    
+    // Position randomly on enemy avatar card area
+    popup.style.top = "60px";
+    popup.style.left = "110px";
+
+    parent.appendChild(popup);
+    
+    setTimeout(() => {
+        popup.remove();
+    }, 850);
+}
+
+// Game Over Handler
+function triggerDndGameOver() {
+    logGameMsg("💀 คุณเสียชีวิตในสนามรบ! หนอนปรสิตเข้ายึดครองสมองและสติสัมปชัญญะของคุณอย่างสมบูรณ์แบบ... GAME OVER", "system-fail");
+    
+    const optionsContainer = document.getElementById("dnd-options");
+    optionsContainer.innerHTML = "";
+    
+    const btnRestart = document.createElement("button");
+    btnRestart.className = "dnd-choice-btn";
+    btnRestart.style.borderColor = "#f43f5e";
+    btnRestart.style.color = "#f43f5e";
+    btnRestart.innerText = "🔄 คืนชีพและเริ่มต้นเกมใหม่ (Restart Game)";
+    
+    btnRestart.addEventListener("click", () => {
+        dndPointPool = 27;
+        dndPlayer.scores = { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 };
+        dndCompanion = null;
+        dndActiveEnemy = null;
+        document.getElementById("dnd-combat-card").classList.add("hidden");
+        document.getElementById("dnd-game-panel").classList.add("hidden");
+        document.getElementById("dnd-char-creator").classList.remove("hidden");
+        refreshPointBuyUi();
+    });
+    optionsContainer.appendChild(btnRestart);
+}
+
 
 

@@ -3528,3 +3528,168 @@ svg.has-highlight .interactive-component:not(.highlighted) {
     100% { transform: scale(1); }
 }
 
+/* ==========================================
+   DND ADVENTURE RPG STYLES
+   ========================================== */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800;900&family=Metamorphous&display=swap');
+
+.bg-dnd-glow {
+    background: rgba(244, 63, 94, 0.1);
+    box-shadow: 0 0 15px rgba(244, 63, 94, 0.1) inset;
+}
+
+.btn-dnd {
+    background: linear-gradient(135deg, #e11d48, #f43f5e);
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(244, 63, 94, 0.35);
+}
+
+.btn-dnd:hover {
+    box-shadow: 0 6px 20px rgba(244, 63, 94, 0.55);
+    filter: brightness(1.1);
+}
+
+#mode-dnd:hover {
+    transform: translateY(-5px);
+    border-color: rgba(244, 63, 94, 0.45);
+    box-shadow: 0 12px 40px rgba(244, 63, 94, 0.15);
+}
+
+/* Character Creator Selectors */
+.dnd-select-pill:hover, .dnd-class-pill:hover {
+    border-color: rgba(244, 63, 94, 0.4) !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.dnd-select-pill.active, .dnd-class-pill.active {
+    border-color: #f43f5e !important;
+    background: rgba(244, 63, 94, 0.15) !important;
+    box-shadow: 0 0 12px rgba(244, 63, 94, 0.2);
+}
+
+.dnd-btn-adjust:hover {
+    background: rgba(244, 63, 94, 0.2) !important;
+    border-color: rgba(244, 63, 94, 0.5) !important;
+}
+
+/* Narrative Console Logs */
+.dnd-msg {
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    line-height: 1.6;
+    font-size: 0.88rem;
+    animation: slideIn 0.35s ease-out forwards;
+}
+
+.dnd-msg.gm {
+    background: rgba(255, 255, 255, 0.02);
+    border-left: 3px solid #fbbf24;
+    color: #e2d8b9;
+    font-style: italic;
+}
+
+.dnd-msg.player {
+    background: rgba(59, 130, 246, 0.08);
+    border-left: 3px solid #3b82f6;
+    color: #93c5fd;
+    font-weight: 600;
+}
+
+.dnd-msg.system {
+    background: rgba(16, 185, 129, 0.08);
+    border-left: 3px solid #10b981;
+    color: #a7f3d0;
+}
+
+.dnd-msg.system-fail {
+    background: rgba(239, 68, 68, 0.08);
+    border-left: 3px solid #ef4444;
+    color: #fca5a5;
+}
+
+/* Dice Roller & Animations */
+#dnd-d20-svg.dice-rolling {
+    animation: spinDice 1.2s cubic-bezier(0.25, 0.8, 0.25, 1) infinite;
+}
+
+@keyframes spinDice {
+    0% { transform: rotate(0deg) scale(0.9); }
+    50% { transform: rotate(360deg) scale(1.15); filter: drop-shadow(0 0 25px #fbbf24); }
+    100% { transform: rotate(720deg) scale(0.9); }
+}
+
+.shake-panel {
+    animation: shakeEffect 0.4s ease-in-out;
+}
+
+@keyframes shakeEffect {
+    0%, 100% { transform: translate(0, 0); }
+    15%, 45%, 75% { transform: translate(-8px, -4px); }
+    30%, 60%, 90% { transform: translate(8px, 4px); }
+}
+
+/* HP critical flashing alert */
+.hp-critical {
+    animation: flashCritical 1.5s infinite alternate;
+}
+
+@keyframes flashCritical {
+    0% { background-color: rgba(239, 68, 68, 0.05); }
+    100% { background-color: rgba(239, 68, 68, 0.35); }
+}
+
+/* Floating damage popups */
+.floating-damage {
+    position: absolute;
+    color: #ef4444;
+    font-weight: 900;
+    font-size: 1.5rem;
+    z-index: 1000;
+    pointer-events: none;
+    text-shadow: 0 0 8px rgba(0,0,0,0.8);
+    animation: floatUp 0.8s ease-out forwards;
+}
+
+@keyframes floatUp {
+    0% { transform: translateY(0) scale(0.8); opacity: 1; }
+    100% { transform: translateY(-40px) scale(1.2); opacity: 0; }
+}
+
+/* Inventory Slots */
+.inv-slot {
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+.inv-slot.filled {
+    border-color: rgba(251, 191, 36, 0.4) !important;
+    background: rgba(251, 191, 36, 0.08) !important;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.15) inset;
+    cursor: pointer;
+}
+
+.inv-slot.filled:hover {
+    transform: scale(1.08);
+    border-color: #fbbf24 !important;
+}
+
+/* Custom adventure choice buttons */
+.dnd-choice-btn {
+    text-align: left;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 0.65rem 1rem;
+    font-size: 0.82rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.dnd-choice-btn:hover {
+    background: rgba(251, 146, 60, 0.08);
+    border-color: rgba(251, 146, 60, 0.35);
+    padding-left: 1.25rem;
+}
+
+
