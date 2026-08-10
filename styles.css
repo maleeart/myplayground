@@ -3692,4 +3692,82 @@ svg.has-highlight .interactive-component:not(.highlighted) {
     padding-left: 1.25rem;
 }
 
+/* DND Desktop Grid Layouts */
+.dnd-creator-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 2.5rem;
+    align-items: start;
+}
+
+.dnd-game-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5rem;
+    align-items: start;
+}
+
+.dnd-arena-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 1.5rem;
+    align-items: start;
+    height: 100%;
+}
+
+/* DND Mobile Responsive Styles */
+@media (max-width: 768px) {
+    .dnd-creator-panel {
+        padding: 1.25rem !important;
+        border-radius: 16px !important;
+    }
+    
+    .dnd-creator-grid {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+    }
+    
+    .dnd-race-select-grid {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+    
+    .dnd-class-select-grid {
+        grid-template-columns: 1fr !important;
+    }
+    
+    .dnd-game-layout {
+        grid-template-columns: 1fr;
+        gap: 1.25rem;
+    }
+    
+    .dnd-arena-grid {
+        grid-template-columns: 1fr;
+        gap: 1.25rem;
+    }
+    
+    #dnd-combat-card {
+        width: 100% !important;
+    }
+    
+    #dnd-d20-container {
+        width: 100px !important;
+        height: 100px !important;
+    }
+    
+    #dnd-d20-svg {
+        width: 80px !important;
+        height: 80px !important;
+    }
+    
+    #dnd-d20-number {
+        font-size: 1.5rem !important;
+    }
+    
+    #dnd-dice-card {
+        width: 90% !important;
+        padding: 1.5rem !important;
+    }
+}
+
+
 

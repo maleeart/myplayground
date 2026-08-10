@@ -1529,7 +1529,7 @@
                         <p style="color: var(--text-secondary); font-size: 1.05rem;">สร้างตัวละครของคุณเพื่อเริ่มผจญภัยในดินแดน Faerûn (อิงกฎ D&D 5e / Baldur's Gate 3)</p>
                     </div>
 
-                    <div class="creator-grid" style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 2.5rem; align-items: start;">
+                    <div class="creator-grid dnd-creator-grid">
                         <!-- Left Creator Column: Details, Race, Class -->
                         <div style="display: flex; flex-direction: column; gap: 1.5rem;">
                             <div class="form-group-egat" style="width: 100%;">
@@ -1691,8 +1691,7 @@
                     </div>
                 </div>
 
-                <!-- Section 2: DND Game Layout (Hidden initially) -->
-                <div id="dnd-game-panel" class="hidden" style="display: grid; grid-template-columns: 280px 1fr; gap: 1.5rem; align-items: start;">
+                <div id="dnd-game-panel" class="hidden dnd-game-layout">
                     
                     <!-- Left Column: Character Sheet Sidebar -->
                     <div style="display: flex; flex-direction: column; gap: 1.25rem;">
@@ -1778,8 +1777,7 @@
                         </div>
                     </div>
 
-                    <!-- Center & Right gameplay arena -->
-                    <div style="display: grid; grid-template-columns: 1fr auto; gap: 1.5rem; align-items: start; height: 100%;">
+                    <div class="dnd-arena-grid">
                         
                         <!-- Narrative Terminal -->
                         <div class="egat-card" style="border-top-color: #fb923c; padding: 1.5rem; display: flex; flex-direction: column; height: 600px;">
