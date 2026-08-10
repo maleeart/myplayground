@@ -3959,7 +3959,11 @@ function finishDiceRoll() {
         
         setTimeout(() => {
             document.getElementById("dnd-dice-overlay").classList.add("hidden");
-            loadDndScene(activeDndCheck.success);
+            if (typeof activeDndCheck.success === "function") {
+                activeDndCheck.success();
+            } else {
+                loadDndScene(activeDndCheck.success);
+            }
         }, 2200);
     } else {
         resultPanel.innerText = baseRoll === 1 ? "💀 CRITICAL FAILURE 💀" : "❌ FAILURE (ล้มเหลว) 💀";
@@ -3975,7 +3979,11 @@ function finishDiceRoll() {
 
         setTimeout(() => {
             document.getElementById("dnd-dice-overlay").classList.add("hidden");
-            loadDndScene(activeDndCheck.fail);
+            if (typeof activeDndCheck.fail === "function") {
+                activeDndCheck.fail();
+            } else {
+                loadDndScene(activeDndCheck.fail);
+            }
         }, 2200);
     }
 }
