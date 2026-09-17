@@ -1,0 +1,14 @@
+{
+  "buildCommand": "cd vehicle-speed-pwa && npm install && npm run build",
+  "outputDirectory": ".",
+  "rewrites": [
+    {
+      "source": "/speed",
+      "destination": "/vehicle-speed-pwa/dist/index.html"
+    },
+    {
+      "source": "/speed/(.*)",
+      "destination": "/vehicle-speed-pwa/dist/$1"
+    }
+  ]
+}

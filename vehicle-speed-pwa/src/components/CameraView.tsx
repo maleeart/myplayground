@@ -1,0 +1,465 @@
+/**
+ * Main Camera & Overlay Rendering View
+ * 
+ * Manages:
+ * 1. Mobile rear camera stream (getUserMedia with 'environment' facingMode) or TrafficSimulator.
+ * 2. High-performance requestAnimationFrame canvas rendering loop.
+ * 3. Computer Vision detection loop (COCO-SSD with dynamic throttling).
+ * 4. ByteTrack Kalman prediction & tracking at full 60 FPS.
+ * 5. Homography perspective mapping & real-time speed overlay.
+ */
+
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { VehicleDetector } from '../core/detector';
+import { ByteTracker } from '../core/tracker';
+import type { CalibrationData } from '../core/homography';
+import { Homography } from '../core/homography';
+import type { VehicleSpeedStats } from '../core/speedEstimator';
+import { SpeedEstimator } from '../core/speedEstimator';
+import type { MotionStatus } from '../utils/motionDetector';
+import { CameraMotionDetector } from '../utils/motionDetector';
+import { TrafficSimulator } from '../utils/simulator';
+import { MetricsOverlay } from './MetricsOverlay';
+import { CalibrationModal } from './CalibrationModal';
+import type { AppSettings } from './SettingsDrawer';
+import { SettingsDrawer } from './SettingsDrawer';
+import { Camera, RefreshCw } from 'lucide-react';
+
+export const CameraView: React.FC = () => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Engines
+  const detectorRef = useRef<VehicleDetector>(new VehicleDetector());
+  const trackerRef = useRef<ByteTracker>(new ByteTracker());
+  const homographyRef = useRef<Homography>(new Homography());
+  const speedEstimatorRef = useRef<SpeedEstimator>(new SpeedEstimator());
+  const motionDetectorRef = useRef<CameraMotionDetector>(new CameraMotionDetector());
+  const simulatorRef = useRef<TrafficSimulator>(new TrafficSimulator(640, 480));
+
+  // Settings & State
+  const [settings, setSettings] = useState<AppSettings>({
+    speedLimitKmh: 60,
+    smoothingFactor: 0.35,
+    scoreThreshold: 0.35,
+    isSimulationMode: false,
+    adaptiveThrottling: true,
+    maxLatencyMs: 35.0,
+  });
+
+  const [calibrationData, setCalibrationData] = useState<CalibrationData>(() => {
+    // Default calibration values (640x480 perspective)
+    return {
+      imagePoints: [
+        { x: 220, y: 190 },
+        { x: 420, y: 190 },
+        { x: 550, y: 440 },
+        { x: 90, y: 440 },
+      ],
+      roadWidthMeters: 7.0,
+      roadLengthMeters: 30.0,
+    };
+  });
+
+  const [isCalibrated, setIsCalibrated] = useState(false);
+  const [isCalibModalOpen, setIsCalibModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // HUD stats
+  const [fps, setFps] = useState(0);
+  const [inferenceLatencyMs, setInferenceLatencyMs] = useState(0);
+  const [internalScale, setInternalScale] = useState(1.0);
+  const [motionStatus, setMotionStatus] = useState<MotionStatus>({
+    isShaking: false,
+    intensity: 0,
+    message: 'Stable',
+  });
+  const [statsMap, setStatsMap] = useState<Map<number, VehicleSpeedStats>>(new Map());
+
+  // FPS calculation
+  const frameCountRef = useRef(0);
+  const lastFpsCalcRef = useRef(performance.now());
+  const isDetectingRef = useRef(false);
+  const animationFrameIdRef = useRef<number | null>(null);
+
+  // Initialize Homography with default calibration
+  useEffect(() => {
+    const success = homographyRef.current.compute(calibrationData);
+    setIsCalibrated(success);
+    speedEstimatorRef.current.setHomography(homographyRef.current);
+  }, [calibrationData]);
+
+  // Sync settings with engines
+  useEffect(() => {
+    speedEstimatorRef.current.setSpeedLimit(settings.speedLimitKmh);
+    speedEstimatorRef.current.setSmoothingFactor(settings.smoothingFactor);
+  }, [settings]);
+
+  // Initialize Detector Model (TFJS COCO-SSD)
+  useEffect(() => {
+    detectorRef.current.init().catch((err) => {
+      console.error('Failed to load detector:', err);
+    });
+  }, []);
+
+  /**
+   * Setup Mobile Rear Camera stream
+   */
+  const startCamera = useCallback(async () => {
+    setCameraError(null);
+    if (settings.isSimulationMode) return;
+
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera API (getUserMedia) not supported or requires HTTPS.');
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' }, // Rear camera
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 60, min: 30 },
+        },
+        audio: false,
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    } catch (err: any) {
+      console.warn('[Camera] Failed to access rear camera:', err);
+      setCameraError(
+        err.message || 'Unable to access rear camera. Switching to Simulator Mode is recommended.'
+      );
+    }
+  }, [settings.isSimulationMode]);
+
+  useEffect(() => {
+    if (!settings.isSimulationMode) {
+      startCamera();
+    } else if (videoRef.current && videoRef.current.srcObject) {
+      // Stop camera tracks when in simulator mode
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((track) => track.stop());
+      videoRef.current.srcObject = null;
+    }
+
+    return () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [startCamera, settings.isSimulationMode]);
+
+  /**
+   * Main Render and Processing Loop (60 FPS)
+   */
+  useEffect(() => {
+    const loop = async (timestamp: number) => {
+      // 1. Calculate FPS
+      frameCountRef.current++;
+      if (timestamp - lastFpsCalcRef.current >= 1000) {
+        setFps(frameCountRef.current);
+        frameCountRef.current = 0;
+        lastFpsCalcRef.current = timestamp;
+      }
+
+      const canvas = canvasRef.current;
+      if (!canvas) {
+        animationFrameIdRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        animationFrameIdRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
+      // 2. Select Video Frame Source (Camera or Simulator)
+      let source: HTMLVideoElement | HTMLCanvasElement | null = null;
+      if (settings.isSimulationMode) {
+        source = simulatorRef.current.render(timestamp);
+      } else if (
+        videoRef.current &&
+        videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+      ) {
+        source = videoRef.current;
+      }
+
+      if (!source) {
+        animationFrameIdRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
+      // Match canvas dimensions to source resolution
+      const srcW = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
+      const srcH = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
+
+      if (srcW > 0 && srcH > 0) {
+        if (canvas.width !== srcW || canvas.height !== srcH) {
+          canvas.width = srcW;
+          canvas.height = srcH;
+        }
+
+        // Draw source video/sim frame to canvas
+        ctx.drawImage(source, 0, 0, srcW, srcH);
+      }
+
+      // 3. Motion & Shake detection
+      const motion = motionDetectorRef.current.evaluateFrame(source);
+      setMotionStatus(motion);
+
+      // 4. Asynchronous Computer Vision Detection
+      if (!isDetectingRef.current && detectorRef.current.ready) {
+        isDetectingRef.current = true;
+        detectorRef.current
+          .detect(source)
+          .then(({ detections, latencyMs, scale }) => {
+            setInferenceLatencyMs(latencyMs);
+            setInternalScale(scale);
+
+            // Feed detections to ByteTrack
+            const activeTracks = trackerRef.current.update(detections, timestamp);
+
+            // Feed active tracks to Speed Estimator
+            const calculatedStats = speedEstimatorRef.current.update(activeTracks, timestamp);
+            setStatsMap(calculatedStats);
+          })
+          .catch((err) => {
+            console.error('Detection error:', err);
+          })
+          .finally(() => {
+            isDetectingRef.current = false;
+          });
+      }
+
+      // 5. Draw Overlays (Calibration Zone, Bounding Boxes, Trajectory Trails, Speed HUD)
+      drawOverlays(ctx);
+
+      animationFrameIdRef.current = requestAnimationFrame(loop);
+    };
+
+    animationFrameIdRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      if (animationFrameIdRef.current !== null) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+      }
+    };
+  }, [settings.isSimulationMode, calibrationData]);
+
+  /**
+   * Draw Visual Overlays onto the Canvas
+   */
+  const drawOverlays = (ctx: CanvasRenderingContext2D) => {
+    // 1. Draw Calibrated Road Zone (Perspective Trapezoid)
+    if (calibrationData.imagePoints.length === 4) {
+      const pts = calibrationData.imagePoints;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[1].x, pts[1].y);
+      ctx.lineTo(pts[2].x, pts[2].y);
+      ctx.lineTo(pts[3].x, pts[3].y);
+      ctx.closePath();
+
+      // Subtle translucent fill
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
+      ctx.fill();
+
+      // Dashed boundary
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // 2. Draw Tracked Vehicles
+    statsMap.forEach((stats, trackId) => {
+      // Find matching track
+      const track = trackerRef.current.getTrackById(trackId);
+      if (!track) return;
+
+      const bbox = track.getBbox();
+      const basePoint = track.getBottomCenter();
+
+      const isOver = stats.currentSpeedKmh > settings.speedLimitKmh;
+      const isNear = stats.currentSpeedKmh > settings.speedLimitKmh - 10;
+      const themeColor = isOver ? '#ef4444' : isNear ? '#f59e0b' : '#10b981';
+
+      // Trajectory Trail (Smooth fading neon line)
+      if (track.history.length > 1) {
+        ctx.beginPath();
+        for (let i = 0; i < track.history.length; i++) {
+          const pt = track.history[i].pixel;
+          if (i === 0) {
+            ctx.moveTo(pt.x, pt.y);
+          } else {
+            ctx.lineTo(pt.x, pt.y);
+          }
+        }
+        ctx.strokeStyle = themeColor;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+
+      // Ground contact point dot
+      ctx.beginPath();
+      ctx.arc(basePoint.x, basePoint.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // High-Tech Corner Bracket Bounding Box
+      const cornerLen = Math.min(bbox.w, bbox.h) * 0.25;
+      ctx.strokeStyle = themeColor;
+      ctx.lineWidth = 2.5;
+
+      // Top-Left
+      ctx.beginPath();
+      ctx.moveTo(bbox.x, bbox.y + cornerLen);
+      ctx.lineTo(bbox.x, bbox.y);
+      ctx.lineTo(bbox.x + cornerLen, bbox.y);
+      ctx.stroke();
+
+      // Top-Right
+      ctx.beginPath();
+      ctx.moveTo(bbox.x + bbox.w - cornerLen, bbox.y);
+      ctx.lineTo(bbox.x + bbox.w, bbox.y);
+      ctx.lineTo(bbox.x + bbox.w, bbox.y + cornerLen);
+      ctx.stroke();
+
+      // Bottom-Right
+      ctx.beginPath();
+      ctx.moveTo(bbox.x + bbox.w, bbox.y + bbox.h - cornerLen);
+      ctx.lineTo(bbox.x + bbox.w, bbox.y + bbox.h);
+      ctx.lineTo(bbox.x + bbox.w - cornerLen, bbox.y + bbox.h);
+      ctx.stroke();
+
+      // Bottom-Left
+      ctx.beginPath();
+      ctx.moveTo(bbox.x + cornerLen, bbox.y + bbox.h);
+      ctx.lineTo(bbox.x, bbox.y + bbox.h);
+      ctx.lineTo(bbox.x, bbox.y + bbox.h - cornerLen);
+      ctx.stroke();
+
+      // Vehicle Speed Badge Overlay above bounding box
+      const badgeW = 95;
+      const badgeH = 26;
+      const badgeX = bbox.x + bbox.w / 2 - badgeW / 2;
+      const badgeY = Math.max(10, bbox.y - badgeH - 6);
+
+      // Badge background
+      ctx.fillStyle = isOver ? 'rgba(239, 68, 68, 0.92)' : 'rgba(15, 23, 42, 0.88)';
+      ctx.beginPath();
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+      ctx.fill();
+      ctx.strokeStyle = themeColor;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Vehicle ID and Class
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(`#${track.id} ${track.class.toUpperCase()}`, badgeX + 6, badgeY + 11);
+
+      // Speed Readout
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 13px monospace';
+      const speedText = isCalibrated ? `${stats.currentSpeedKmh} km/h` : 'UNCALIBRATED';
+      ctx.fillText(speedText, badgeX + 6, badgeY + 23);
+    });
+  };
+
+  return (
+    <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center">
+      {/* Hidden Mobile Video Element for getUserMedia */}
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        autoPlay
+        className="hidden"
+      />
+
+      {/* Main Fullscreen HUD Canvas */}
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full object-contain"
+      />
+
+      {/* Camera Error / Permission Fallback Banner */}
+      {cameraError && !settings.isSimulationMode && (
+        <div className="absolute top-16 left-4 right-4 bg-slate-900/90 border border-amber-600/60 text-amber-200 p-3.5 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col gap-2">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <Camera className="w-5 h-5 text-amber-400 shrink-0" />
+            <span>Rear Camera Notice</span>
+          </div>
+          <p className="text-xs text-slate-300">
+            {cameraError}
+            <br />
+            (Note: Mobile browsers require HTTPS to grant camera permissions).
+          </p>
+          <div className="flex gap-2 mt-1">
+            <button
+              onClick={() => setSettings((s) => ({ ...s, isSimulationMode: true }))}
+              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-lg shadow"
+            >
+              Switch to Simulator Mode
+            </button>
+            <button
+              onClick={startCamera}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Retry Camera
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* HUD Metrics & Status Overlays */}
+      <MetricsOverlay
+        fps={fps}
+        inferenceLatencyMs={inferenceLatencyMs}
+        motionStatus={motionStatus}
+        isCalibrated={isCalibrated}
+        isSimulationMode={settings.isSimulationMode}
+        speedLimitKmh={settings.speedLimitKmh}
+        statsMap={statsMap}
+        onOpenCalibration={() => setIsCalibModalOpen(true)}
+        onToggleSettings={() => setIsSettingsOpen(true)}
+        internalScale={internalScale}
+      />
+
+      {/* 4-Point Homography Calibration Modal */}
+      <CalibrationModal
+        isOpen={isCalibModalOpen}
+        onClose={() => setIsCalibModalOpen(false)}
+        onSave={(newCalib) => setCalibrationData(newCalib)}
+        initialCalibration={calibrationData}
+        canvasWidth={canvasRef.current?.width || 640}
+        canvasHeight={canvasRef.current?.height || 480}
+        previewImageSource={
+          settings.isSimulationMode ? simulatorRef.current.getCanvas() : videoRef.current
+        }
+      />
+
+      {/* Settings & Tuning Drawer */}
+      <SettingsDrawer
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        onUpdateSettings={(newSettings) => setSettings((prev) => ({ ...prev, ...newSettings }))}
+        onOpenCalibration={() => setIsCalibModalOpen(true)}
+      />
+    </div>
+  );
+};

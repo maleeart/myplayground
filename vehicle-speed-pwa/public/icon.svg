@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <rect width="504" height="504" x="4" y="4" rx="106" fill="none" stroke="#1e293b" stroke-width="8"/>
+  <!-- Speedometer dial -->
+  <path d="M 106 350 A 170 170 0 1 1 406 350" fill="none" stroke="#1e293b" stroke-width="28" stroke-linecap="round"/>
+  <path d="M 106 350 A 170 170 0 1 1 330 135" fill="none" stroke="url(#neon)" stroke-width="28" stroke-linecap="round"/>
+  <!-- Needle -->
+  <line x1="256" y1="256" x2="315" y2="155" stroke="#f43f5e" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="256" cy="256" r="24" fill="#f43f5e"/>
+  <circle cx="256" cy="256" r="10" fill="#ffffff"/>
+  <!-- Text -->
+  <text x="256" y="420" font-family="-apple-system, sans-serif" font-weight="900" font-size="44" fill="#38bdf8" text-anchor="middle" letter-spacing="4">SPEED</text>
+</svg>

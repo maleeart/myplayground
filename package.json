@@ -1,0 +1,8 @@
+{
+  "name": "myplayground",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "cd vehicle-speed-pwa && npm install && npm run build"
+  }
+}

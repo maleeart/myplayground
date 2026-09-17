@@ -111,7 +111,10 @@ body {
 .header-controls {
     display: flex;
     align-items: center;
-    gap: 1.5rem;
+    gap: 1rem;
+    min-width: 0;
+    flex: 1;
+    justify-content: flex-end;
 }
 
 /* Tab Switcher */
@@ -777,28 +780,55 @@ svg.has-highlight .interactive-component:not(.highlighted) {
 /* Navigation Buttons */
 .header-nav {
     display: flex;
-    gap: 0.25rem;
+    gap: 0.35rem;
     align-items: center;
-    background: rgba(0, 0, 0, 0.25);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    padding: 0.25rem;
-    border-radius: 12px;
-    margin-right: 1rem;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 0.3rem 0.4rem;
+    border-radius: 14px;
+    margin-right: 0.5rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    max-width: 100%;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(56, 189, 248, 0.3) transparent;
+}
+
+.header-nav::-webkit-scrollbar {
+    height: 4px;
+}
+
+.header-nav::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+}
+
+.header-nav::-webkit-scrollbar-thumb {
+    background: rgba(56, 189, 248, 0.35);
+    border-radius: 4px;
+}
+
+.header-nav::-webkit-scrollbar-thumb:hover {
+    background: rgba(56, 189, 248, 0.6);
 }
 
 .nav-link-btn {
     background: transparent;
     border: 1px solid transparent;
     color: var(--text-secondary);
-    padding: 0.5rem 0.9rem;
-    font-size: 0.8rem;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.82rem;
     font-weight: 600;
     cursor: pointer;
-    border-radius: 9px;
+    border-radius: 10px;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .nav-link-btn svg {
@@ -2343,29 +2373,62 @@ svg.has-highlight .interactive-component:not(.highlighted) {
 }
 
 /* ================= MEDIA QUERIES ================= */
+@media (max-width: 1024px) {
+    .app-header {
+        padding: 0.6rem 1rem;
+    }
+    .header-controls {
+        gap: 0.5rem;
+    }
+}
+
 @media (max-width: 768px) {
     .app-header {
         flex-direction: column;
-        align-items: center;
-        padding: 0.75rem 1rem;
+        align-items: stretch;
+        padding: 0.6rem 0.75rem;
         height: auto;
+        min-height: unset;
+        gap: 0.4rem;
     }
     
     .app-header h1 {
-        font-size: 1.1rem;
-        text-align: center;
-        margin-bottom: 0.5rem;
+        font-size: 1.05rem;
+        text-align: left;
+        margin-bottom: 0;
+        justify-content: flex-start;
     }
     
     .header-controls {
         flex-direction: column;
         width: 100%;
-        gap: 0.5rem;
-        align-items: center;
+        gap: 0.4rem;
+        align-items: stretch;
+        overflow: hidden;
+    }
+
+    .header-nav {
+        width: 100%;
+        margin-right: 0;
+        padding: 0.25rem 0.35rem;
+        display: flex;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x proximity;
+    }
+
+    .nav-link-btn {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.76rem;
+        scroll-snap-align: start;
     }
     
     .tab-group {
         width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
     }
     
     .tab-btn {
