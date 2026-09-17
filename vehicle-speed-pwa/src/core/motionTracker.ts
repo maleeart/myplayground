@@ -51,12 +51,16 @@ export class MotionTracker {
   private activeBlobs: Map<number, MotionBlob> = new Map();
 
   public config: MotionTrackerConfig;
+  public showMotionMask: boolean = false;
+  private maskCanvas: HTMLCanvasElement;
+  private maskCtx: CanvasRenderingContext2D;
+  private maskImageData: ImageData;
 
   // Sensitivity thresholds (difference in luminance 0-255)
   private thresholdMap = {
-    high: 16,
-    medium: 24,
-    low: 36,
+    high: 7,
+    medium: 12,
+    low: 20,
   };
 
   constructor(config?: Partial<MotionTrackerConfig>) {
@@ -64,7 +68,7 @@ export class MotionTracker {
       sensitivity: 'medium',
       distanceMeters: 15.0,
       angleDegrees: 90,
-      minAreaPx: 1200, // min ~35x35px in full resolution
+      minAreaPx: 120, // Sensitive enough to detect hand waving or distant cars
       ...config,
     };
 
@@ -73,8 +77,18 @@ export class MotionTracker {
     this.sampleCanvas.height = this.height;
     this.sampleCtx = this.sampleCanvas.getContext('2d', { willReadFrequently: true })!;
 
+    this.maskCanvas = document.createElement('canvas');
+    this.maskCanvas.width = this.width;
+    this.maskCanvas.height = this.height;
+    this.maskCtx = this.maskCanvas.getContext('2d')!;
+    this.maskImageData = this.maskCtx.createImageData(this.width, this.height);
+
     this.cellW = this.width / this.gridCols;
     this.cellH = this.height / this.gridRows;
+  }
+
+  public getMaskCanvas(): HTMLCanvasElement {
+    return this.maskCanvas;
   }
 
   /**
@@ -133,6 +147,11 @@ export class MotionTracker {
     // Adaptive background learning rate: 0.04 (adapts to clouds/lighting but moving cars stand out)
     const bgRate = 0.04;
 
+    const maskData = this.showMotionMask ? this.maskImageData.data : null;
+    if (maskData) {
+      maskData.fill(0);
+    }
+
     for (let y = 0; y < this.height; y++) {
       const rowOffset = y * this.width;
       const gridY = Math.floor(y / this.cellH);
@@ -155,16 +174,28 @@ export class MotionTracker {
         if (frameDiff > diffThreshold || bgDiff > diffThreshold + 8) {
           const gridX = Math.floor(x / this.cellW);
           gridMotionCount[gridRowOffset + gridX]++;
+
+          if (maskData) {
+            const pIdx = idx * 4;
+            maskData[pIdx] = 16;      // R
+            maskData[pIdx + 1] = 240;  // G: Fluorescent green
+            maskData[pIdx + 2] = 180;  // B: Fluorescent cyan
+            maskData[pIdx + 3] = 210;  // Alpha
+          }
         }
       }
+    }
+
+    if (this.showMotionMask) {
+      this.maskCtx.putImageData(this.maskImageData, 0, 0);
     }
 
     // Store previous frame
     this.prevFrameData = currentGray;
 
     // 3. Grid-Based Clustering (Connected Components on 30x22 grid)
-    // A grid cell is active if >= 5 pixels inside it moved
-    const minCellActivePixels = 5;
+    // A grid cell is active if >= 3 pixels inside it moved
+    const minCellActivePixels = 3;
     const activeGrid = new Uint8Array(this.gridCols * this.gridRows);
     for (let i = 0; i < activeGrid.length; i++) {
       if (gridMotionCount[i] >= minCellActivePixels) {
@@ -217,9 +248,8 @@ export class MotionTracker {
             }
           }
 
-          // Filter out tiny noise (e.g. less than 2 connected cells)
-          // and reject massive screen shifts (e.g. camera panning > 75% of grid)
-          if (cellCount >= 2 && cellCount < this.gridCols * this.gridRows * 0.75) {
+          // Filter out tiny noise and reject massive screen shifts (e.g. camera panning > 75% of grid)
+          if (cellCount >= 1 && cellCount < this.gridCols * this.gridRows * 0.75) {
             rawBoxes.push({
               minX: minGX * this.cellW,
               minY: minGY * this.cellH,
@@ -334,8 +364,8 @@ export class MotionTracker {
             bestBlob.avgSpeedKmh = Math.round(sum / bestBlob.speedSamples.length);
             bestBlob.distanceTraveledPx += dPixels;
 
-            // Trigger logging once object has sustained reliable movement (> 10 km/h & 5 hits)
-            if (!bestBlob.hasBeenLogged && bestBlob.hits >= 5 && bestBlob.currentSpeedKmh > 8) {
+            // Trigger logging once object has sustained reliable movement (> 2 km/h & 4 hits)
+            if (!bestBlob.hasBeenLogged && bestBlob.hits >= 4 && bestBlob.currentSpeedKmh > 2) {
               bestBlob.hasBeenLogged = true;
               newlyDetectedForLogging.push(bestBlob);
             }

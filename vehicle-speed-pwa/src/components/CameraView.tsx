@@ -1,16 +1,21 @@
 /**
  * Ultra-Fast Optical Motion Speedometer & Camera View
  * 
- * Rebuilt from the ground up:
+ * Rebuilt & Optimized:
  * - Pure Frame-to-Frame Differencing (เปรียบเทียบเฟรมต่อเฟรม): Instantly locks onto ANY moving object!
- * - 60 FPS sub-millisecond execution (No slow neural net loading or dropouts)
- * - Automatic velocity estimation in km/h based on distance reference
+ * - Fixed Mobile Video Stream Decoding: Offscreen rendering with active hardware decoding (no display:none drops).
+ * - Interactive Dual Modes:
+ *     1) 📹 กล้องสด (Live Camera): Real-time motion detection from smartphone camera
+ *     2) 🎮 โหมดจำลองถนน (Simulator): Calm single-car traffic simulator with manual spawn buttons
+ * - Live Motion Mask Mode (👁️ โหมดมาสก์): Visualizes active moving pixels in vibrant neon green/cyan
+ * - Automatic velocity estimation in km/h based on distance reference (5m, 10m, 15m, 25m, 40m)
  * - Auto-snapshot capture and persistent detection history log
- * - Clean, distraction-free interface with quick 1-tap distance and sensitivity controls
+ * - Principle & Guide Modal explaining the science simply
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { MotionTracker, type MotionBlob } from '../core/motionTracker';
+import { TrafficSimulator } from '../utils/simulator';
 import { DetectionHistoryDrawer, type DetectionRecord } from './DetectionHistoryDrawer';
 import { audioAlert } from '../utils/audioAlert';
 import {
@@ -23,6 +28,11 @@ import {
   Unlock,
   Activity,
   Zap,
+  HelpCircle,
+  X,
+  Car,
+  Play,
+  RotateCcw,
 } from 'lucide-react';
 
 export const CameraView: React.FC = () => {
@@ -35,9 +45,18 @@ export const CameraView: React.FC = () => {
     new MotionTracker({
       distanceMeters: 15.0,
       sensitivity: 'medium',
-      minAreaPx: 900,
+      minAreaPx: 120, // High sensitivity for both indoor tests & road traffic
     })
   );
+
+  // Traffic Simulator Engine (Calm 1-car test bench)
+  const simulatorRef = useRef<TrafficSimulator>(new TrafficSimulator(640, 480));
+
+  // Mode & Feature Toggles
+  const [sourceMode, setSourceMode] = useState<'camera' | 'sim'>('camera');
+  const [showMask, setShowMask] = useState<boolean>(false);
+  const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
+  const [simAutoSpawn, setSimAutoSpawn] = useState<boolean>(true);
 
   // Settings & Controls
   const [distanceMeters, setDistanceMeters] = useState<number>(15);
@@ -76,7 +95,7 @@ export const CameraView: React.FC = () => {
   }, [distanceMeters, sensitivity, soundEnabled]);
 
   /**
-   * Capture a cropped snapshot of the moving object from full-resolution video
+   * Capture a cropped snapshot of the moving object from full-resolution video/canvas
    */
   const captureSnapshot = (
     src: HTMLVideoElement | HTMLCanvasElement,
@@ -246,8 +265,7 @@ export const CameraView: React.FC = () => {
       }
 
       const canvas = canvasRef.current;
-      const video = videoRef.current;
-      if (!canvas || !video) {
+      if (!canvas) {
         animationFrameIdRef.current = requestAnimationFrame(loop);
         return;
       }
@@ -258,24 +276,65 @@ export const CameraView: React.FC = () => {
         return;
       }
 
-      // Ensure video is playing with valid dimensions
-      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
-        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
+      let inputSource: HTMLVideoElement | HTMLCanvasElement | null = null;
 
-        // Draw live camera frame
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      if (sourceMode === 'sim') {
+        // Simulation source
+        const simCanvas = simulatorRef.current.render(timestamp);
+        if (canvas.width !== simCanvas.width || canvas.height !== simCanvas.height) {
+          canvas.width = simCanvas.width;
+          canvas.height = simCanvas.height;
+        }
+        ctx.drawImage(simCanvas, 0, 0, canvas.width, canvas.height);
+        inputSource = simCanvas;
+      } else {
+        // Camera source
+        const video = videoRef.current;
+        if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+          if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+          }
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          inputSource = video;
+        } else {
+          // Standby Screen
+          if (canvas.width === 0 || canvas.height === 0) {
+            canvas.width = 640;
+            canvas.height = 480;
+          }
+          ctx.fillStyle = '#020617';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = 'bold 14px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('📡 กำลังเชื่อมต่อกล้องมือถือ...', canvas.width / 2, canvas.height / 2);
+          ctx.textAlign = 'left';
+        }
+      }
+
+      if (inputSource) {
+        // Configure motion mask mode
+        motionTrackerRef.current.showMotionMask = showMask;
 
         // 1. Process Frame Differencing & Motion Tracking
-        const { blobs, newlyDetectedForLogging } = motionTrackerRef.current.processFrame(video, timestamp);
+        const { blobs, newlyDetectedForLogging } = motionTrackerRef.current.processFrame(inputSource, timestamp);
         setActiveBlobs(blobs);
 
-        // 2. Handle Auto-Snapshot & Logging for newly confirmed moving objects
+        // 2. Draw Motion Mask if toggled
+        if (showMask) {
+          const maskCanvas = motionTrackerRef.current.getMaskCanvas();
+          ctx.save();
+          ctx.globalAlpha = 0.55;
+          ctx.drawImage(maskCanvas, 0, 0, canvas.width, canvas.height);
+          ctx.restore();
+        }
+
+        // 3. Handle Auto-Snapshot & Logging for newly confirmed moving objects
         if (newlyDetectedForLogging.length > 0) {
           for (const blob of newlyDetectedForLogging) {
-            const snapUrl = captureSnapshot(video, blob.bbox);
+            const snapUrl = captureSnapshot(inputSource, blob.bbox);
             const now = new Date();
             const timeStr = now.toTimeString().split(' ')[0];
             const isOver = blob.peakSpeedKmh > speedLimitKmh;
@@ -283,7 +342,7 @@ export const CameraView: React.FC = () => {
             const newRecord: DetectionRecord = {
               id: `${blob.id}-${Date.now()}`,
               trackId: blob.id,
-              vehicleClass: 'วัตถุเคลื่อนไหว',
+              vehicleClass: sourceMode === 'sim' ? 'รถจำลอง' : 'วัตถุเคลื่อนไหว',
               timestamp: timeStr,
               peakSpeedKmh: blob.peakSpeedKmh,
               avgSpeedKmh: blob.avgSpeedKmh || blob.peakSpeedKmh,
@@ -311,22 +370,8 @@ export const CameraView: React.FC = () => {
           }
         }
 
-        // 3. Render Motion HUD Overlays
-        drawMotionOverlays(ctx, blobs, canvas.width, canvas.height);
-      } else {
-        // Standby Screen
-        if (canvas.width === 0 || canvas.height === 0) {
-          canvas.width = 640;
-          canvas.height = 480;
-        }
-        ctx.fillStyle = '#020617';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 14px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('📡 กำลังเชื่อมต่อกล้องมือถือ...', canvas.width / 2, canvas.height / 2);
-        ctx.textAlign = 'left';
+        // 4. Render Motion HUD Overlays
+        drawMotionOverlays(ctx, blobs);
       }
 
       animationFrameIdRef.current = requestAnimationFrame(loop);
@@ -339,21 +384,19 @@ export const CameraView: React.FC = () => {
         cancelAnimationFrame(animationFrameIdRef.current);
       }
     };
-  }, [distanceMeters, speedLimitKmh]);
+  }, [distanceMeters, speedLimitKmh, sourceMode, showMask]);
 
   /**
    * Draw glowing motion bounding boxes, trajectory trails, and speed badges
    */
   const drawMotionOverlays = (
     ctx: CanvasRenderingContext2D,
-    blobs: MotionBlob[],
-    _width: number,
-    _height: number
+    blobs: MotionBlob[]
   ) => {
     for (const blob of blobs) {
       const { bbox, centroid, history, currentSpeedKmh } = blob;
       const isOver = currentSpeedKmh > speedLimitKmh;
-      const isMoving = currentSpeedKmh > 5;
+      const isMoving = currentSpeedKmh > 3;
       const themeColor = isOver ? '#ef4444' : isMoving ? '#10b981' : '#38bdf8';
 
       // 1. Trajectory Trail (Smooth neon trail)
@@ -428,7 +471,7 @@ export const CameraView: React.FC = () => {
 
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 12px sans-serif';
-      ctx.fillText(`วัตถุ #${blob.id}`, badgeX + 8, badgeY + 14);
+      ctx.fillText(`เป้าหมาย #${blob.id}`, badgeX + 8, badgeY + 14);
 
       ctx.fillStyle = isOver ? '#ffffff' : '#38bdf8';
       ctx.font = 'bold 13px monospace';
@@ -439,13 +482,25 @@ export const CameraView: React.FC = () => {
 
   return (
     <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center select-none">
-      {/* Hidden Mobile Video Stream */}
+      {/* 
+        Active Offscreen Video Element:
+        CRITICAL: Never use display:none or className="hidden" because mobile browsers
+        will stop hardware frame decoding, rendering drawImage blank or frozen.
+      */}
       <video
         ref={videoRef}
         playsInline
         muted
         autoPlay
-        className="hidden"
+        style={{
+          position: 'fixed',
+          top: -9999,
+          left: -9999,
+          width: 1,
+          height: 1,
+          opacity: 0,
+          pointerEvents: 'none',
+        }}
       />
 
       {/* Main 60 FPS Canvas Feed */}
@@ -455,23 +510,32 @@ export const CameraView: React.FC = () => {
         className="w-full h-full object-contain cursor-crosshair"
       />
 
-      {/* Camera Error Notice */}
-      {cameraError && (
+      {/* Camera Error Notice (Only in Camera mode) */}
+      {sourceMode === 'camera' && cameraError && (
         <div className="absolute top-16 left-4 right-4 bg-slate-900/95 border border-amber-600 text-amber-200 p-4 rounded-2xl shadow-2xl flex flex-col gap-2 z-30">
           <div className="flex items-center gap-2 font-bold text-sm">
             <Camera className="w-5 h-5 text-amber-400" />
             <span>ต้องการสิทธิ์การเข้าถึงกล้อง</span>
           </div>
           <p className="text-xs text-slate-300">
-            {cameraError} (ต้องเปิดผ่าน HTTPS หรือ Localhost บนมือถือ)
+            {cameraError} (ต้องเปิดผ่าน HTTPS หรือกดโหมดจำลองเพื่อทดสอบได้ทันที)
           </p>
-          <button
-            onClick={startCamera}
-            className="self-start px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 border border-slate-700"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            ลองใหม่อีกครั้ง
-          </button>
+          <div className="flex gap-2 mt-1">
+            <button
+              onClick={startCamera}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 border border-slate-700"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              ลองใหม่อีกครั้ง
+            </button>
+            <button
+              onClick={() => setSourceMode('sim')}
+              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1"
+            >
+              <Car className="w-3.5 h-3.5" />
+              สลับไปโหมดจำลอง (SIM)
+            </button>
+          </div>
         </div>
       )}
 
@@ -486,127 +550,247 @@ export const CameraView: React.FC = () => {
       {/* ULTRA-CLEAN HUD CONTROLS OVERLAY */}
       <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2.5 sm:p-3">
         {/* Top Minimal Action Bar */}
-        <div className="pointer-events-auto flex items-center justify-between gap-2 bg-slate-950/90 backdrop-blur-md px-3 py-2 rounded-2xl border border-slate-800 shadow-2xl overflow-x-auto no-scrollbar w-full">
-          {/* Left: Motion Status & FPS */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/50 text-emerald-300 text-xs font-bold">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>ตรวจจับความเคลื่อนไหว (MOTION)</span>
+        <div className="flex flex-col gap-2 w-full">
+          <div className="pointer-events-auto flex items-center justify-between gap-2 bg-slate-950/90 backdrop-blur-md px-3 py-2 rounded-2xl border border-slate-800 shadow-2xl overflow-x-auto no-scrollbar w-full">
+            {/* Left: Mode Switch & Status */}
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Camera vs Sim Mode Switch */}
+              <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
+                <button
+                  onClick={() => {
+                    setSourceMode('camera');
+                    motionTrackerRef.current.reset();
+                    setToastNote('📹 เปลี่ยนเป็นโหมดกล้องสด');
+                    setTimeout(() => setToastNote(null), 2000);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
+                    sourceMode === 'camera'
+                      ? 'bg-emerald-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Camera className="w-3 h-3" />
+                  <span>กล้องสด</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setSourceMode('sim');
+                    motionTrackerRef.current.reset();
+                    setToastNote('🎮 เปลี่ยนเป็นโหมดจำลองถนน');
+                    setTimeout(() => setToastNote(null), 2000);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1 ${
+                    sourceMode === 'sim'
+                      ? 'bg-sky-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Car className="w-3 h-3" />
+                  <span>โหมดจำลอง</span>
+                </button>
+              </div>
+
+              {/* FPS & Motion Indicator */}
+              <div className="hidden xs:flex items-center gap-1 text-[11px] font-mono text-slate-400 border-l border-slate-800 pl-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-bold text-white">{fps}</span>
+                <span>FPS</span>
+              </div>
             </div>
 
-            <div className="hidden xs:flex items-center gap-1 text-[11px] font-mono text-slate-400 border-l border-slate-800 pl-2">
-              <Activity className="w-3 h-3 text-sky-400" />
-              <span className="font-bold text-white">{fps}</span>
-              <span>FPS</span>
+            {/* Right: Controls & Presets */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Distance Presets */}
+              <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
+                <span className="px-1.5 text-slate-400 text-[10px]">ระยะ:</span>
+                {[5, 10, 15, 25, 40].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setDistanceMeters(d)}
+                    className={`px-1.5 sm:px-2 py-0.5 rounded-lg font-bold transition ${
+                      distanceMeters === d
+                        ? 'bg-sky-500 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title={`ตั้งระยะห่างจากกล้อง ${d} เมตร`}
+                  >
+                    {d}m
+                  </button>
+                ))}
+              </div>
+
+              {/* Sensitivity */}
+              <div className="hidden sm:flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
+                <span className="px-1.5 text-slate-400 text-[10px]">ความไว:</span>
+                {(['low', 'medium', 'high'] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setSensitivity(s)}
+                    className={`px-1.5 py-0.5 rounded-lg font-bold transition ${
+                      sensitivity === s
+                        ? 'bg-amber-500 text-white shadow'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title={`ปรับความไว: ${s}`}
+                  >
+                    {s === 'low' ? 'ต่ำ' : s === 'medium' ? 'กลาง' : 'สูง'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Speed Limit Cycler */}
+              <button
+                onClick={() => {
+                  const limits = [40, 60, 80, 100];
+                  const next = limits[(limits.indexOf(speedLimitKmh) + 1) % limits.length];
+                  setSpeedLimitKmh(next);
+                  setToastNote(`🚨 ความเร็วเตือนเกินกำหนด: ${next} km/h`);
+                  setTimeout(() => setToastNote(null), 2000);
+                }}
+                className="px-2 py-1 rounded-xl text-xs font-bold border border-rose-500/40 bg-rose-500/15 text-rose-300 transition hover:bg-rose-500/25"
+                title="แตะเพื่อเปลี่ยนระดับความเร็วเตือนเกินกำหนด"
+              >
+                🚨 {speedLimitKmh} km/h
+              </button>
+
+              {/* Motion Mask Toggle */}
+              <button
+                onClick={() => {
+                  const next = !showMask;
+                  setShowMask(next);
+                  setToastNote(next ? '👁️ เปิดดูพิกเซลเคลื่อนไหว (เรืองแสงสีเขียว)' : '👁️ ปิดโหมดพิกเซล');
+                  setTimeout(() => setToastNote(null), 2000);
+                }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold border transition ${
+                  showMask
+                    ? 'bg-emerald-500/25 border-emerald-500 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                }`}
+                title="เปิด/ปิดการแสดงพิกเซลที่กำลังเคลื่อนไหว"
+              >
+                <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden md:inline">ดูพิกเซลขยับ</span>
+              </button>
+
+              {/* Focus Lock (Camera mode only) */}
+              {sourceMode === 'camera' && (
+                <button
+                  onClick={handleToggleFocusLock}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-xl text-xs font-semibold border transition ${
+                    isFocusLocked
+                      ? 'bg-emerald-500/25 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                  }`}
+                  title={isFocusLocked ? 'โฟกัสคงที่แล้ว' : 'แตะเพื่อล็อกโฟกัส'}
+                >
+                  {isFocusLocked ? (
+                    <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                  )}
+                </button>
+              )}
+
+              {/* Principle & Help Modal Button */}
+              <button
+                onClick={() => setShowHelpModal(true)}
+                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded-xl border border-slate-700 transition"
+                title="หลักการทำงานและคู่มือ"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+              </button>
+
+              {/* History Drawer */}
+              <button
+                onClick={() => setIsHistoryOpen(true)}
+                className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-semibold rounded-xl border border-slate-700 transition"
+                title="เปิดดูภาพถ่ายและประวัติความเร็วที่แคปไว้"
+              >
+                <ClipboardList className="w-3.5 h-3.5 text-sky-400" />
+                <span>ประวัติ</span>
+                {records.length > 0 && (
+                  <span className="px-1.5 py-0.2 bg-sky-500 text-white font-mono rounded-full text-[10px]">
+                    {records.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Audio Toggle */}
+              <button
+                onClick={() => setSoundEnabled(!soundEnabled)}
+                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition"
+                title={soundEnabled ? 'ปิดเสียงเตือน' : 'เปิดเสียงเตือน'}
+              >
+                {soundEnabled ? (
+                  <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <VolumeX className="w-3.5 h-3.5 text-slate-500" />
+                )}
+              </button>
             </div>
           </div>
 
-          {/* Right: Quick Controls */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* 1-Tap Distance Preset */}
-            <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
-              <span className="px-1.5 text-slate-400 text-[10px]">ระยะ:</span>
-              {[10, 15, 25, 40].map((d) => (
+          {/* Simulator Control Bar (Shown when in Simulator Mode) */}
+          {sourceMode === 'sim' && (
+            <div className="pointer-events-auto flex items-center justify-between gap-2 bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-sky-500/50 shadow-xl overflow-x-auto no-scrollbar w-full">
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] font-bold text-sky-400">ควบคุมรถจำลอง:</span>
                 <button
-                  key={d}
-                  onClick={() => setDistanceMeters(d)}
-                  className={`px-2 py-0.5 rounded-lg font-bold transition ${
-                    distanceMeters === d
-                      ? 'bg-sky-500 text-white shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title={`ตั้งระยะห่างจากกล้องถึงถนน ${d} เมตร`}
+                  onClick={() => {
+                    simulatorRef.current.spawnVehicle('car', 55);
+                    setToastNote('🚗 ปล่อยรถ 1 คัน (55 km/h)');
+                    setTimeout(() => setToastNote(null), 1800);
+                  }}
+                  className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1 shadow"
                 >
-                  {d}m
+                  <Play className="w-3 h-3" />
+                  <span>ปล่อยรถ 1 คัน (55 km/h)</span>
                 </button>
-              ))}
-            </div>
-
-            {/* Sensitivity */}
-            <div className="hidden sm:flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
-              <span className="px-1.5 text-slate-400 text-[10px]">ความไว:</span>
-              {(['low', 'medium', 'high'] as const).map((s) => (
                 <button
-                  key={s}
-                  onClick={() => setSensitivity(s)}
-                  className={`px-2 py-0.5 rounded-lg font-bold transition ${
-                    sensitivity === s
-                      ? 'bg-amber-500 text-white shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                  title={`ปรับความไว: ${s}`}
+                  onClick={() => {
+                    simulatorRef.current.spawnSpeedingVehicle();
+                    setToastNote('🏎️ ปล่อยรถซิ่ง (95+ km/h)');
+                    setTimeout(() => setToastNote(null), 1800);
+                  }}
+                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1 shadow"
                 >
-                  {s === 'low' ? 'ต่ำ' : s === 'medium' ? 'กลาง' : 'สูง'}
+                  <Zap className="w-3 h-3 text-amber-300" />
+                  <span>ปล่อยรถซิ่ง (95 km/h)</span>
                 </button>
-              ))}
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => {
+                    const next = !simAutoSpawn;
+                    setSimAutoSpawn(next);
+                    simulatorRef.current.autoSpawn = next;
+                    setToastNote(next ? '🔁 เปิดปล่อยรถอัตโนมัติ (ทีละคัน ห่างกัน 3.5 วิ)' : '⏸️ ปิดปล่อยอัตโนมัติ (กดปล่อยเอง)');
+                    setTimeout(() => setToastNote(null), 2000);
+                  }}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition ${
+                    simAutoSpawn
+                      ? 'bg-emerald-950/70 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-300'
+                  }`}
+                >
+                  {simAutoSpawn ? '🔁 ปล่อยอัตโนมัติ: เปิด' : '⏸️ ปล่อยอัตโนมัติ: ปิด'}
+                </button>
+                <button
+                  onClick={() => {
+                    simulatorRef.current.clearVehicles();
+                    motionTrackerRef.current.reset();
+                    setToastNote('🧹 ล้างรถบนถนนแล้ว');
+                    setTimeout(() => setToastNote(null), 1500);
+                  }}
+                  className="p-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition"
+                  title="เคลียร์ถนน"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
-
-            {/* Speed Limit Cycler */}
-            <button
-              onClick={() => {
-                const limits = [40, 60, 80, 100];
-                const next = limits[(limits.indexOf(speedLimitKmh) + 1) % limits.length];
-                setSpeedLimitKmh(next);
-                setToastNote(`🚨 ความเร็วเตือนเกินกำหนด: ${next} km/h`);
-                setTimeout(() => setToastNote(null), 2000);
-              }}
-              className="px-2 py-1 rounded-xl text-xs font-bold border border-rose-500/40 bg-rose-500/15 text-rose-300 transition hover:bg-rose-500/25"
-              title="แตะเพื่อเปลี่ยนระดับความเร็วเตือนเกินกำหนด"
-            >
-              🚨 {speedLimitKmh} km/h
-            </button>
-
-            {/* Focus Lock */}
-            <button
-              onClick={handleToggleFocusLock}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold border transition ${
-                isFocusLocked
-                  ? 'bg-emerald-500/25 border-emerald-500 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-              }`}
-              title={isFocusLocked ? 'โฟกัสคงที่แล้ว' : 'แตะเพื่อล็อกโฟกัส'}
-            >
-              {isFocusLocked ? (
-                <>
-                  <Lock className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline">โฟกัสคงที่</span>
-                </>
-              ) : (
-                <>
-                  <Unlock className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden sm:inline">ล็อกโฟกัส</span>
-                </>
-              )}
-            </button>
-
-            {/* History Drawer */}
-            <button
-              onClick={() => setIsHistoryOpen(true)}
-              className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-semibold rounded-xl border border-slate-700 transition"
-              title="เปิดดูภาพถ่ายและประวัติความเร็วที่แคปไว้"
-            >
-              <ClipboardList className="w-3.5 h-3.5 text-sky-400" />
-              <span>ประวัติ</span>
-              {records.length > 0 && (
-                <span className="px-1.5 py-0.2 bg-sky-500 text-white font-mono rounded-full text-[10px]">
-                  {records.length}
-                </span>
-              )}
-            </button>
-
-            {/* Audio Toggle */}
-            <button
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition"
-              title={soundEnabled ? 'ปิดเสียงเตือน' : 'เปิดเสียงเตือน'}
-            >
-              {soundEnabled ? (
-                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-              ) : (
-                <VolumeX className="w-3.5 h-3.5 text-slate-500" />
-              )}
-            </button>
-          </div>
+          )}
         </div>
 
         {/* Bottom Live Feed Stats Bar */}
@@ -614,7 +798,11 @@ export const CameraView: React.FC = () => {
           {activeBlobs.length === 0 ? (
             <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 px-3.5 py-2 rounded-xl text-xs text-slate-300 flex items-center gap-2 shadow-xl">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-              <span>📡 เล็งกล้องไปที่ถนน (เมื่อมีรถหรือวัตถุขยับ ระบบจะล็อกและวัดความเร็วทันที)</span>
+              <span>
+                {sourceMode === 'sim'
+                  ? '🎮 กำลังรอรถแล่นผ่าน (กดปุ่ม "ปล่อยรถ 1 คัน" เพื่อเริ่มทดสอบ)'
+                  : '📡 ส่องกล้องไปที่ถนนหรือลองโบกมือ (ระบบจะล็อกเป้าหมายและวัดความเร็วทันที)'}
+              </span>
             </div>
           ) : (
             activeBlobs.map((blob) => {
@@ -650,6 +838,78 @@ export const CameraView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Principle & Guide Modal */}
+      {showHelpModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 max-w-lg w-full rounded-2xl p-5 text-slate-200 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+              <div className="flex items-center gap-2 text-sky-400 font-bold text-base">
+                <HelpCircle className="w-5 h-5" />
+                <span>หลักการทำงานและการวัดความเร็ว</span>
+              </div>
+              <button
+                onClick={() => setShowHelpModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs leading-relaxed text-slate-300">
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                <h4 className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
+                  <span>1. ตรวจจับการเคลื่อนไหวได้อย่างไร (Frame Differencing)</span>
+                </h4>
+                <p>
+                  กล้องทำงานที่ 60 เฟรมต่อวินาที โดยนำภาพเฟรมปัจจุบันมาลบกับเฟรมก่อนหน้า 
+                  ส่วนที่อยู่นิ่ง (ถนน ตึก เสาไฟ) จะลบกันแล้วเป็น 0 
+                  ส่วนที่มีสิ่งใดขยับ (คนเดิน โบกมือ หรือรถวิ่ง) พิกเซลจะเปลี่ยนสี ระบบจะตีกรอบสีเขียวล็อกเป้าหมายทันที
+                </p>
+              </div>
+
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                <h4 className="font-bold text-sky-400 mb-1 flex items-center gap-1.5">
+                  <span>2. แปลงเป็นความเร็ว km/h ได้อย่างไร (Speed Math)</span>
+                </h4>
+                <p>
+                  ระบบวัดว่าจุดกึ่งกลางของวัตถุเลื่อนไปกี่พิกเซลในเวลาที่ผ่านไป (วินาที) 
+                  จากนั้นแปลงพิกเซลเป็นระยะทางจริง (เมตร) โดยใช้มุมมองเลนส์กล้องมือถือ (FOV ประมาณ 65 องศา)
+                  และความกว้างของภาพที่มองเห็นประมาณ 1.28 x ระยะห่าง 
+                  แล้วคำนวณ: <strong>(เมตร / วินาที) &times; 3.6 = km/h</strong>
+                </p>
+              </div>
+
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                <h4 className="font-bold text-amber-400 mb-1 flex items-center gap-1.5">
+                  <span>3. บันทึกภาพประวัติอัตโนมัติ (Auto Snapshot)</span>
+                </h4>
+                <p>
+                  เมื่อวัตถุเคลื่อนไหวต่อเนื่อง ระบบจะตัดภาพถ่ายเฉพาะตัวรถขนาด 128x128 พิกเซล 
+                  และบันทึกลงในแถบ "ประวัติ" พร้อมสถิติความเร็วสูงสุดทันที
+                </p>
+              </div>
+
+              <div className="bg-sky-950/30 p-3 rounded-xl border border-sky-600/40">
+                <h4 className="font-bold text-sky-300 mb-1">💡 คำแนะนำในการใช้งาน</h4>
+                <ul className="list-disc pl-4 space-y-1">
+                  <li><strong>ตั้งกล้องให้นิ่ง:</strong> วางบนขาตั้ง หรือถือให้นิ่ง เพื่อไม่ให้พื้นหลังขยับ</li>
+                  <li><strong>ตั้งระยะให้ตรง:</strong> ปรับปุ่มระยะ (5m ในห้อง, 10m-25m ริมถนน) ให้ตรงกับระยะห่างจริง</li>
+                  <li><strong>กดดู "พิกเซลขยับ":</strong> เพื่อดูจุดเรืองแสงสีเขียวว่ากล้องกำลังจับการเคลื่อนไหวตรงไหน</li>
+                  <li><strong>ทดสอบใน "โหมดจำลอง":</strong> กดปล่อยรถ 1 คันเพื่อดูจำลองการตรวจจับทีละคันได้อย่างสบายตา</li>
+                </ul>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowHelpModal(false)}
+              className="mt-5 w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold text-xs transition"
+            >
+              เข้าใจแล้ว เริ่มใช้งาน
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Detection History Drawer */}
       <DetectionHistoryDrawer

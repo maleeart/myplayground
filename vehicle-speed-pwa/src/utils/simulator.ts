@@ -27,7 +27,10 @@ export class TrafficSimulator {
   private lastTime = 0;
   private roadWidthMeters = 7.0; // 2 lanes (3.5m each)
   private roadLengthMeters = 30.0;
+  public isPaused = false;
+  public autoSpawn = true;
   private nextVehicleId = 1;
+  private spawnCooldownTimer = 0;
 
   constructor(width = 640, height = 480) {
     this.canvas = document.createElement('canvas');
@@ -42,38 +45,43 @@ export class TrafficSimulator {
   }
 
   private initVehicles(): void {
+    // Only 1 vehicle to start calmly
     this.vehicles = [
       {
         id: this.nextVehicleId++,
         class: 'car',
         lane: 0,
-        distanceMeters: 2.0,
+        distanceMeters: -1,
         targetSpeedKmh: 55,
         color: '#2563eb', // royal blue
         widthMeters: 1.8,
         lengthMeters: 4.2,
       },
-      {
-        id: this.nextVehicleId++,
-        class: 'truck',
-        lane: 1,
-        distanceMeters: 12.0,
-        targetSpeedKmh: 42,
-        color: '#d97706', // amber
-        widthMeters: 2.4,
-        lengthMeters: 8.0,
-      },
-      {
-        id: this.nextVehicleId++,
-        class: 'motorcycle',
-        lane: 0,
-        distanceMeters: 22.0,
-        targetSpeedKmh: 68,
-        color: '#db2777', // pink
-        widthMeters: 0.9,
-        lengthMeters: 2.1,
-      },
     ];
+  }
+
+  /**
+   * Spawns a single test vehicle
+   */
+  public spawnVehicle(vehicleClass: 'car' | 'truck' | 'motorcycle' = 'car', targetSpeed = 60): void {
+    const lane = Math.random() > 0.5 ? 1 : 0;
+    const colors = {
+      car: '#2563eb',
+      truck: '#d97706',
+      motorcycle: '#db2777',
+      bus: '#059669',
+    };
+
+    this.vehicles.push({
+      id: this.nextVehicleId++,
+      class: vehicleClass,
+      lane,
+      distanceMeters: -2,
+      targetSpeedKmh: targetSpeed,
+      color: colors[vehicleClass] || '#2563eb',
+      widthMeters: vehicleClass === 'truck' ? 2.4 : vehicleClass === 'motorcycle' ? 0.9 : 1.8,
+      lengthMeters: vehicleClass === 'truck' ? 8.0 : vehicleClass === 'motorcycle' ? 2.1 : 4.2,
+    });
   }
 
   /**
@@ -85,8 +93,8 @@ export class TrafficSimulator {
       id: this.nextVehicleId++,
       class: 'car',
       lane,
-      distanceMeters: 0,
-      targetSpeedKmh: 88 + Math.random() * 22, // 88 - 110 km/h
+      distanceMeters: -2,
+      targetSpeedKmh: 92 + Math.round(Math.random() * 15), // 92 - 107 km/h
       color: '#dc2626', // Speeding Red Sports Car
       widthMeters: 1.8,
       lengthMeters: 4.2,
@@ -142,6 +150,20 @@ export class TrafficSimulator {
   }
 
   /**
+   * Clears all active vehicles
+   */
+  public clearVehicles(): void {
+    this.vehicles = [];
+  }
+
+  /**
+   * Returns current active vehicle count
+   */
+  public getVehicleCount(): number {
+    return this.vehicles.length;
+  }
+
+  /**
    * Updates vehicle positions based on elapsed delta time and renders synthetic frame
    */
   public render(timestamp: number): HTMLCanvasElement {
@@ -149,15 +171,30 @@ export class TrafficSimulator {
     const dt = Math.min(0.1, (timestamp - this.lastTime) / 1000);
     this.lastTime = timestamp;
 
-    // Advance vehicles
-    for (const v of this.vehicles) {
-      const speedMps = (v.targetSpeedKmh / 3.6);
-      v.distanceMeters += speedMps * dt;
+    if (!this.isPaused) {
+      // Advance vehicles and remove exited ones
+      for (let i = this.vehicles.length - 1; i >= 0; i--) {
+        const v = this.vehicles[i];
+        const speedMps = v.targetSpeedKmh / 3.6;
+        v.distanceMeters += speedMps * dt;
 
-      // Loop back if vehicle exits perspective segment
-      if (v.distanceMeters > this.roadLengthMeters + 8) {
-        v.distanceMeters = -4;
-        v.targetSpeedKmh = 40 + Math.random() * 45; // Vary speed 40-85 km/h
+        // Vehicle exits bottom of screen
+        if (v.distanceMeters > this.roadLengthMeters + 4) {
+          this.vehicles.splice(i, 1);
+          // 3.5s of calm empty road before auto-spawning next car
+          this.spawnCooldownTimer = 3.5;
+        }
+      }
+
+      // Calm Auto-Spawn: Only when road is completely clear and cooldown expires
+      if (this.autoSpawn && this.vehicles.length === 0) {
+        this.spawnCooldownTimer -= dt;
+        if (this.spawnCooldownTimer <= 0) {
+          const speeds = [50, 58, 65, 72];
+          const chosenSpeed = speeds[Math.floor(Math.random() * speeds.length)];
+          this.spawnVehicle('car', chosenSpeed);
+          this.spawnCooldownTimer = 4.0;
+        }
       }
     }
 
