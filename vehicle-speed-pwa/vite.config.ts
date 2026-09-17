@@ -6,7 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './',
+  base: '/speed/',
   plugins: [
     react(),
     tailwindcss(),
@@ -24,7 +24,7 @@ export default defineConfig({
         orientation: 'any',
         icons: [
           {
-            src: '/icon.svg',
+            src: '/speed/icon.svg',
             sizes: '192x192 512x512',
             type: 'image/svg+xml',
             purpose: 'any maskable',

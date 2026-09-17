@@ -1,14 +1,26 @@
 {
   "buildCommand": "cd vehicle-speed-pwa && npm install && npm run build",
   "outputDirectory": ".",
-  "rewrites": [
+  "cleanUrls": false,
+  "redirects": [
     {
       "source": "/speed",
+      "destination": "/speed/",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/speed/",
       "destination": "/vehicle-speed-pwa/dist/index.html"
     },
     {
       "source": "/speed/(.*)",
       "destination": "/vehicle-speed-pwa/dist/$1"
+    },
+    {
+      "source": "/assets/(.*)",
+      "destination": "/vehicle-speed-pwa/dist/assets/$1"
     }
   ]
 }

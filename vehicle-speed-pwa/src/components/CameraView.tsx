@@ -191,6 +191,34 @@ export const CameraView: React.FC = () => {
       }
 
       if (!source) {
+        // Render standby grid while camera is initializing so screen is never blank
+        if (canvas.width === 0 || canvas.height === 0) {
+          canvas.width = 640;
+          canvas.height = 480;
+        }
+        ctx.fillStyle = '#020617';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(canvas.width / 2, 0);
+        ctx.lineTo(canvas.width / 2, canvas.height);
+        ctx.moveTo(0, canvas.height / 2);
+        ctx.lineTo(canvas.width, canvas.height / 2);
+        ctx.arc(canvas.width / 2, canvas.height / 2, 80, 0, Math.PI * 2);
+        ctx.arc(canvas.width / 2, canvas.height / 2, 160, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('📡 INITIALIZING CAMERA STREAM...', canvas.width / 2, canvas.height / 2 - 8);
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText('Tap Allow for camera permission or switch to Simulator Mode', canvas.width / 2, canvas.height / 2 + 16);
+        ctx.textAlign = 'left';
+
         animationFrameIdRef.current = requestAnimationFrame(loop);
         return;
       }
