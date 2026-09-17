@@ -73,7 +73,7 @@ export class STrack {
     this.hits++;
     this.timeSinceUpdate = 0;
 
-    if (this.state === 'New' && this.hits >= 3) {
+    if (this.state === 'New' && this.hits >= 2) {
       this.state = 'Tracked';
     }
 
@@ -119,10 +119,10 @@ export class ByteTracker {
     matchThresh?: number;
     maxAge?: number;
   }) {
-    this.highScoreThresh = options?.highScoreThresh ?? 0.45;
-    this.lowScoreThresh = options?.lowScoreThresh ?? 0.15;
-    this.matchThresh = options?.matchThresh ?? 0.7; // IoU distance threshold (1 - IoU) <= 0.7 => IoU >= 0.3
-    this.maxAge = options?.maxAge ?? 30; // 30 frames tolerance for occlusion
+    this.highScoreThresh = options?.highScoreThresh ?? 0.22;
+    this.lowScoreThresh = options?.lowScoreThresh ?? 0.10;
+    this.matchThresh = options?.matchThresh ?? 0.75; // IoU distance threshold
+    this.maxAge = options?.maxAge ?? 35; // Frames tolerance for temporary occlusion
   }
 
   /**
@@ -191,8 +191,8 @@ export class ByteTracker {
     // 7. Cleanup removed tracks
     this.tracks = this.tracks.filter((t) => t.state !== 'Removed');
 
-    // Return tracks that are confirmed or active
-    return this.tracks.filter((t) => t.state === 'Tracked' || (t.state === 'New' && t.hits >= 2));
+    // Return tracks that are confirmed or newly active
+    return this.tracks.filter((t) => t.state === 'Tracked' || t.hits >= 1);
   }
 
   public getTrackById(id: number): STrack | undefined {

@@ -43,12 +43,16 @@ export class VehicleDetector {
   private offscreenCtx: CanvasRenderingContext2D | null;
 
   constructor(config?: DetectorConfig) {
-    this.scoreThreshold = config?.scoreThreshold ?? 0.35;
+    this.scoreThreshold = config?.scoreThreshold ?? 0.22;
     this.maxLatencyMs = config?.maxLatencyMs ?? 35.0;
     this.enableAdaptiveResolution = config?.enableAdaptiveResolution ?? true;
 
     this.offscreenCanvas = document.createElement('canvas');
     this.offscreenCtx = this.offscreenCanvas.getContext('2d', { willReadFrequently: true });
+  }
+
+  public setScoreThreshold(threshold: number): void {
+    this.scoreThreshold = Math.max(0.10, Math.min(0.80, threshold));
   }
 
   /**

@@ -299,18 +299,54 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
   };
 
   const handleReset = () => {
-    // Default trapezoid covering center of view
+    applyPreset('roadside');
+  };
+
+  const applyPreset = (preset: 'roadside' | 'bridge' | 'window' | 'wide') => {
     const w = canvasWidth;
     const h = canvasHeight;
-    const defaultPoints: [Point2D, Point2D, Point2D, Point2D] = [
-      { x: Math.round(w * 0.35), y: Math.round(h * 0.45) },
-      { x: Math.round(w * 0.65), y: Math.round(h * 0.45) },
-      { x: Math.round(w * 0.85), y: Math.round(h * 0.88) },
-      { x: Math.round(w * 0.15), y: Math.round(h * 0.88) },
-    ];
-    setPoints(defaultPoints);
-    setRoadWidth(3.5);
-    setRoadLength(20.0);
+    switch (preset) {
+      case 'roadside': // Stand on sidewalk / roadside (15m lane segment)
+        setPoints([
+          { x: Math.round(w * 0.38), y: Math.round(h * 0.42) },
+          { x: Math.round(w * 0.65), y: Math.round(h * 0.42) },
+          { x: Math.round(w * 0.88), y: Math.round(h * 0.86) },
+          { x: Math.round(w * 0.12), y: Math.round(h * 0.86) },
+        ]);
+        setRoadWidth(3.5);
+        setRoadLength(15.0);
+        break;
+      case 'bridge': // Overpass / Footbridge looking down
+        setPoints([
+          { x: Math.round(w * 0.32), y: Math.round(h * 0.28) },
+          { x: Math.round(w * 0.68), y: Math.round(h * 0.28) },
+          { x: Math.round(w * 0.82), y: Math.round(h * 0.90) },
+          { x: Math.round(w * 0.18), y: Math.round(h * 0.90) },
+        ]);
+        setRoadWidth(7.0);
+        setRoadLength(35.0);
+        break;
+      case 'window': // Balcony / 2nd-3rd floor window
+        setPoints([
+          { x: Math.round(w * 0.30), y: Math.round(h * 0.35) },
+          { x: Math.round(w * 0.70), y: Math.round(h * 0.35) },
+          { x: Math.round(w * 0.90), y: Math.round(h * 0.82) },
+          { x: Math.round(w * 0.10), y: Math.round(h * 0.82) },
+        ]);
+        setRoadWidth(4.0);
+        setRoadLength(20.0);
+        break;
+      case 'wide': // 2-3 Lanes Highway
+        setPoints([
+          { x: Math.round(w * 0.25), y: Math.round(h * 0.40) },
+          { x: Math.round(w * 0.75), y: Math.round(h * 0.40) },
+          { x: Math.round(w * 0.95), y: Math.round(h * 0.88) },
+          { x: Math.round(w * 0.05), y: Math.round(h * 0.88) },
+        ]);
+        setRoadWidth(7.0);
+        setRoadLength(25.0);
+        break;
+    }
   };
 
   const handleSave = () => {
@@ -392,11 +428,40 @@ export const CalibrationModal: React.FC<CalibrationModalProps> = ({
         </div>
       </div>
 
+      {/* 1-Tap Quick Presets Selector */}
+      <div className="px-4 py-2.5 bg-slate-950/90 border-t border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <span className="text-[11px] font-bold text-slate-400 shrink-0 mr-1">📐 พรีเซ็ตด่วน:</span>
+        <button
+          onClick={() => applyPreset('roadside')}
+          className="px-2.5 py-1 bg-slate-800 hover:bg-sky-900/40 hover:border-sky-500 border border-slate-700 rounded-lg text-xs font-medium text-slate-200 shrink-0 transition"
+        >
+          🚗 ริมทาง/ฟุตบาท (15m)
+        </button>
+        <button
+          onClick={() => applyPreset('bridge')}
+          className="px-2.5 py-1 bg-slate-800 hover:bg-sky-900/40 hover:border-sky-500 border border-slate-700 rounded-lg text-xs font-medium text-slate-200 shrink-0 transition"
+        >
+          🌉 สะพานลอย (35m)
+        </button>
+        <button
+          onClick={() => applyPreset('window')}
+          className="px-2.5 py-1 bg-slate-800 hover:bg-sky-900/40 hover:border-sky-500 border border-slate-700 rounded-lg text-xs font-medium text-slate-200 shrink-0 transition"
+        >
+          🏢 ระเบียง/ตึก (20m)
+        </button>
+        <button
+          onClick={() => applyPreset('wide')}
+          className="px-2.5 py-1 bg-slate-800 hover:bg-sky-900/40 hover:border-sky-500 border border-slate-700 rounded-lg text-xs font-medium text-slate-200 shrink-0 transition"
+        >
+          🛣️ ถนน 2-3 เลน (25m)
+        </button>
+      </div>
+
       {/* Ground Truth Metric Dimensions Input Bar */}
       <div className="p-4 bg-slate-900 border-t border-slate-800 grid grid-cols-2 gap-4">
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-1">
-            Road Width (P0-P1, meters)
+            ความกว้างถนน (Road Width, เมตร)
           </label>
           <div className="flex items-center bg-slate-800 rounded-lg px-3 py-1.5 border border-slate-700 focus-within:border-sky-500">
             <input

@@ -123,7 +123,7 @@ export class SpeedEstimator {
         currentSpeedKmh: track.currentSpeedKmh,
         averageSpeedKmh: track.averageSpeedKmh,
         maxSpeedKmh: track.maxSpeedKmh,
-        isStationary: true,
+        isStationary: false, // acquiring speed
         isOverLimit: false,
         metricPosition: currentMetricPt,
         distanceTraveledMeters: 0,

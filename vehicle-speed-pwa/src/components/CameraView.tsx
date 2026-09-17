@@ -4,9 +4,10 @@
  * Manages:
  * 1. Mobile rear camera stream (getUserMedia with 'environment' facingMode) or TrafficSimulator.
  * 2. High-performance requestAnimationFrame canvas rendering loop.
- * 3. Computer Vision detection loop (COCO-SSD with dynamic throttling).
+ * 3. Computer Vision detection loop (COCO-SSD with dynamic throttling & sensitivity tuning).
  * 4. ByteTrack Kalman prediction & tracking at full 60 FPS.
  * 5. Homography perspective mapping & real-time speed overlay.
+ * 6. Automatic Detection Logging & Photo Snapshotting for review.
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -23,6 +24,9 @@ import { MetricsOverlay } from './MetricsOverlay';
 import { CalibrationModal } from './CalibrationModal';
 import type { AppSettings } from './SettingsDrawer';
 import { SettingsDrawer } from './SettingsDrawer';
+import type { DetectionRecord } from './DetectionHistoryDrawer';
+import { DetectionHistoryDrawer } from './DetectionHistoryDrawer';
+import { audioAlert } from '../utils/audioAlert';
 import { Camera, RefreshCw } from 'lucide-react';
 
 export const CameraView: React.FC = () => {
@@ -41,10 +45,12 @@ export const CameraView: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>({
     speedLimitKmh: 60,
     smoothingFactor: 0.35,
-    scoreThreshold: 0.35,
+    scoreThreshold: 0.22,
     isSimulationMode: false,
     adaptiveThrottling: true,
     maxLatencyMs: 35.0,
+    sensitivity: 'balanced',
+    soundEnabled: true,
   });
 
   const [calibrationData, setCalibrationData] = useState<CalibrationData>(() => {
@@ -64,7 +70,19 @@ export const CameraView: React.FC = () => {
   const [isCalibrated, setIsCalibrated] = useState(false);
   const [isCalibModalOpen, setIsCalibModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // Detection History records
+  const [records, setRecords] = useState<DetectionRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('speed_pwa_records');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const loggedTracksRef = useRef<Set<number>>(new Set());
 
   // HUD stats
   const [fps, setFps] = useState(0);
@@ -94,6 +112,8 @@ export const CameraView: React.FC = () => {
   useEffect(() => {
     speedEstimatorRef.current.setSpeedLimit(settings.speedLimitKmh);
     speedEstimatorRef.current.setSmoothingFactor(settings.smoothingFactor);
+    detectorRef.current.setScoreThreshold(settings.scoreThreshold);
+    audioAlert.enabled = settings.soundEnabled;
   }, [settings]);
 
   // Initialize Detector Model (TFJS COCO-SSD)
@@ -102,6 +122,31 @@ export const CameraView: React.FC = () => {
       console.error('Failed to load detector:', err);
     });
   }, []);
+
+  /**
+   * Helper to crop a snapshot thumbnail from video/simulator canvas
+   */
+  const captureSnapshot = (
+    src: HTMLVideoElement | HTMLCanvasElement,
+    bbox: { x: number; y: number; w: number; h: number }
+  ): string | undefined => {
+    try {
+      const snapCanvas = document.createElement('canvas');
+      snapCanvas.width = 96;
+      snapCanvas.height = 96;
+      const sCtx = snapCanvas.getContext('2d');
+      if (!sCtx) return undefined;
+      const pad = 12;
+      const sx = Math.max(0, bbox.x - pad);
+      const sy = Math.max(0, bbox.y - pad);
+      const sw = bbox.w + pad * 2;
+      const sh = bbox.h + pad * 2;
+      sCtx.drawImage(src, sx, sy, sw, sh, 0, 0, 96, 96);
+      return snapCanvas.toDataURL('image/jpeg', 0.6);
+    } catch {
+      return undefined;
+    }
+  };
 
   /**
    * Setup Mobile Rear Camera stream
@@ -256,6 +301,52 @@ export const CameraView: React.FC = () => {
             // Feed active tracks to Speed Estimator
             const calculatedStats = speedEstimatorRef.current.update(activeTracks, timestamp);
             setStatsMap(calculatedStats);
+
+            // Auto-Log Vehicles with Peak Speeds
+            calculatedStats.forEach((stat, trackId) => {
+              if (stat.currentSpeedKmh > 5 && !loggedTracksRef.current.has(trackId)) {
+                loggedTracksRef.current.add(trackId);
+
+                // Snapshot thumbnail
+                const trk = trackerRef.current.getTrackById(trackId);
+                let snapUrl: string | undefined = undefined;
+                if (trk && source) {
+                  snapUrl = captureSnapshot(source, trk.getBbox());
+                }
+
+                const now = new Date();
+                const timeStr = now.toTimeString().split(' ')[0];
+
+                const newRecord: DetectionRecord = {
+                  id: `${trackId}-${Date.now()}`,
+                  trackId,
+                  vehicleClass: stat.vehicleClass,
+                  timestamp: timeStr,
+                  peakSpeedKmh: stat.currentSpeedKmh,
+                  avgSpeedKmh: stat.averageSpeedKmh || stat.currentSpeedKmh,
+                  distanceMeters: stat.distanceTraveledMeters,
+                  isOverLimit: stat.isOverLimit,
+                  snapshotUrl: snapUrl,
+                };
+
+                setRecords((prev) => {
+                  const updated = [newRecord, ...prev.slice(0, 49)];
+                  try {
+                    localStorage.setItem('speed_pwa_records', JSON.stringify(updated));
+                  } catch {
+                    // storage full
+                  }
+                  return updated;
+                });
+
+                // Audio Chime
+                if (stat.isOverLimit) {
+                  audioAlert.playOverspeedAlarm();
+                } else {
+                  audioAlert.playDetectBlip();
+                }
+              }
+            });
           })
           .catch((err) => {
             console.error('Detection error:', err);
@@ -379,8 +470,8 @@ export const CameraView: React.FC = () => {
       ctx.stroke();
 
       // Vehicle Speed Badge Overlay above bounding box
-      const badgeW = 95;
-      const badgeH = 26;
+      const badgeW = 100;
+      const badgeH = 28;
       const badgeX = bbox.x + bbox.w / 2 - badgeW / 2;
       const badgeY = Math.max(10, bbox.y - badgeH - 6);
 
@@ -401,8 +492,15 @@ export const CameraView: React.FC = () => {
       // Speed Readout
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 13px monospace';
-      const speedText = isCalibrated ? `${stats.currentSpeedKmh} km/h` : 'UNCALIBRATED';
-      ctx.fillText(speedText, badgeX + 6, badgeY + 23);
+      let speedText = '';
+      if (!isCalibrated) {
+        speedText = 'UNCALIBRATED';
+      } else if (stats.currentSpeedKmh > 0) {
+        speedText = `${stats.currentSpeedKmh} km/h`;
+      } else {
+        speedText = 'LOCKING...';
+      }
+      ctx.fillText(speedText, badgeX + 6, badgeY + 24);
     });
   };
 
@@ -425,7 +523,7 @@ export const CameraView: React.FC = () => {
 
       {/* Camera Error / Permission Fallback Banner */}
       {cameraError && !settings.isSimulationMode && (
-        <div className="absolute top-16 left-4 right-4 bg-slate-900/90 border border-amber-600/60 text-amber-200 p-3.5 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col gap-2">
+        <div className="absolute top-16 left-4 right-4 bg-slate-900/90 border border-amber-600/60 text-amber-200 p-3.5 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col gap-2 z-20">
           <div className="flex items-center gap-2 font-semibold text-sm">
             <Camera className="w-5 h-5 text-amber-400 shrink-0" />
             <span>Rear Camera Notice</span>
@@ -464,6 +562,11 @@ export const CameraView: React.FC = () => {
         statsMap={statsMap}
         onOpenCalibration={() => setIsCalibModalOpen(true)}
         onToggleSettings={() => setIsSettingsOpen(true)}
+        onOpenHistory={() => setIsHistoryOpen(true)}
+        historyCount={records.length}
+        onToggleSim={() => setSettings((s) => ({ ...s, isSimulationMode: !s.isSimulationMode }))}
+        audioEnabled={settings.soundEnabled}
+        onToggleAudio={() => setSettings((s) => ({ ...s, soundEnabled: !s.soundEnabled }))}
         internalScale={internalScale}
       />
 
@@ -487,6 +590,19 @@ export const CameraView: React.FC = () => {
         settings={settings}
         onUpdateSettings={(newSettings) => setSettings((prev) => ({ ...prev, ...newSettings }))}
         onOpenCalibration={() => setIsCalibModalOpen(true)}
+      />
+
+      {/* Detection History Drawer */}
+      <DetectionHistoryDrawer
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        records={records}
+        onClear={() => {
+          setRecords([]);
+          loggedTracksRef.current.clear();
+          localStorage.removeItem('speed_pwa_records');
+        }}
+        speedLimitKmh={settings.speedLimitKmh}
       />
     </div>
   );

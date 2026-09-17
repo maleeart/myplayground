@@ -19,6 +19,8 @@ export interface AppSettings {
   isSimulationMode: boolean;
   adaptiveThrottling: boolean;
   maxLatencyMs: number;
+  sensitivity: 'ultra' | 'balanced' | 'strict';
+  soundEnabled: boolean;
 }
 
 interface SettingsDrawerProps {
@@ -87,6 +89,51 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
             </div>
             <p className="text-[11px] text-slate-500 mt-2">
               Simulator mode generates synthetic traffic with known ground-truth speeds for laboratory testing.
+            </p>
+          </div>
+
+          {/* AI Detection Sensitivity */}
+          <div className="bg-slate-850 p-3 rounded-xl border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-300 font-medium text-xs">🎯 ความไวการตรวจจับ (AI Sensitivity)</span>
+              <span className="text-sky-400 font-bold font-mono text-xs">
+                {settings.sensitivity === 'ultra' ? 'สูงพิเศษ (Ultra)' : settings.sensitivity === 'strict' ? 'เข้มงวด (Strict)' : 'สมดุล (Balanced)'}
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                onClick={() => onUpdateSettings({ sensitivity: 'ultra', scoreThreshold: 0.18 })}
+                className={`py-1.5 px-2 rounded-lg text-xs font-semibold border transition ${
+                  settings.sensitivity === 'ultra'
+                    ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}
+              >
+                สูง (0.18)
+              </button>
+              <button
+                onClick={() => onUpdateSettings({ sensitivity: 'balanced', scoreThreshold: 0.24 })}
+                className={`py-1.5 px-2 rounded-lg text-xs font-semibold border transition ${
+                  settings.sensitivity === 'balanced'
+                    ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}
+              >
+                สมดุล (0.24)
+              </button>
+              <button
+                onClick={() => onUpdateSettings({ sensitivity: 'strict', scoreThreshold: 0.35 })}
+                className={`py-1.5 px-2 rounded-lg text-xs font-semibold border transition ${
+                  settings.sensitivity === 'strict'
+                    ? 'bg-sky-500/20 border-sky-500 text-sky-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}
+              >
+                เข้มงวด (0.35)
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              หากตรวจจับรถไม่ค่อยติด ให้เลือก "สูง" เพื่อช่วยจับรถที่วิ่งเร็วหรืออยู่ไกลได้ง่ายขึ้น
             </p>
           </div>
 
