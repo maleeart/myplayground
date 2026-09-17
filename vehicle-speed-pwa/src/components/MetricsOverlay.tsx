@@ -22,6 +22,9 @@ import {
   VolumeX,
   PlaySquare,
   Camera,
+  Lock,
+  Unlock,
+  Target,
 } from 'lucide-react';
 
 interface MetricsOverlayProps {
@@ -41,6 +44,11 @@ interface MetricsOverlayProps {
   onToggleAudio: () => void;
   internalScale: number;
   onSpawnSpeedingCar?: () => void;
+  isFocusLocked?: boolean;
+  onToggleFocusLock?: () => void;
+  isTripodMode?: boolean;
+  onToggleTripodMode?: () => void;
+  focusSupportNote?: string | null;
 }
 
 export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
@@ -60,6 +68,11 @@ export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
   onToggleAudio,
   internalScale,
   onSpawnSpeedingCar,
+  isFocusLocked = false,
+  onToggleFocusLock,
+  isTripodMode = true,
+  onToggleTripodMode,
+  focusSupportNote,
 }) => {
   // Display all active tracks (even if just locked onto)
   const activeStats = Array.from(statsMap.values());
@@ -124,6 +137,55 @@ export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
 
         {/* Right: History Log, Audio, Calibration, Settings */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* Focus Lock Button (Live Camera Only) */}
+          {!isSimulationMode && onToggleFocusLock && (
+            <button
+              onClick={onToggleFocusLock}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
+                isFocusLocked
+                  ? 'bg-emerald-500/25 border-emerald-500 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title={
+                isFocusLocked
+                  ? 'โฟกัสถูกล็อกคงที่แล้ว (กล้องจะไม่ปรับเองเมื่อมีรถวิ่งผ่าน)'
+                  : 'แตะเพื่อล็อกระยะโฟกัสและแสงคงที่'
+              }
+            >
+              {isFocusLocked ? (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden xs:inline">โฟกัสคงที่</span>
+                </>
+              ) : (
+                <>
+                  <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden xs:inline">ล็อกโฟกัส</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Tripod Mode Toggle */}
+          {onToggleTripodMode && (
+            <button
+              onClick={onToggleTripodMode}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border transition ${
+                isTripodMode
+                  ? 'bg-sky-500/20 border-sky-500/60 text-sky-300'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-400 border-slate-700'
+              }`}
+              title={
+                isTripodMode
+                  ? 'โหมดขาตั้งกล้อง (เปิดอยู่): ปิดแจ้งเตือนกล้องสั่นเมื่อมีรถผ่าน'
+                  : 'โหมดถือด้วยมือ: แตะเพื่อเปิดโหมดขาตั้งกล้อง'
+              }
+            >
+              <span>🔭</span>
+              <span className="hidden sm:inline">{isTripodMode ? 'ขาตั้ง' : 'ถือมือ'}</span>
+            </button>
+          )}
+
           {/* History Log Drawer button */}
           <button
             onClick={onOpenHistory}
@@ -181,6 +243,14 @@ export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
         </div>
       </div>
 
+      {/* Focus / Camera Support Toast */}
+      {focusSupportNote && (
+        <div className="self-center mt-2 flex items-center gap-2 bg-slate-900/95 border border-sky-500/70 text-sky-200 px-3.5 py-1.5 rounded-xl text-xs shadow-2xl backdrop-blur-md animate-in fade-in zoom-in duration-150">
+          <Target className="w-4 h-4 text-sky-400 shrink-0" />
+          <span>{focusSupportNote}</span>
+        </div>
+      )}
+
       {/* Simulator Mode Active Banner */}
       {isSimulationMode && (
         <div className="pointer-events-auto self-center mt-2 flex flex-wrap items-center justify-between gap-2 bg-indigo-950/90 border border-indigo-500/60 text-indigo-100 px-3 py-1.5 rounded-xl text-xs shadow-2xl backdrop-blur-md max-w-lg w-full">
@@ -206,11 +276,11 @@ export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
         </div>
       )}
 
-      {/* Camera Shake Warning Toast */}
-      {motionStatus.isShaking && (
+      {/* Camera Shake Warning Toast (Only in Handheld Mode, completely hidden in Tripod Mode) */}
+      {!isTripodMode && motionStatus.isShaking && (
         <div className="self-center mt-2 flex items-center gap-2 bg-rose-950/90 border border-rose-600 text-rose-200 px-4 py-2 rounded-xl text-xs shadow-2xl backdrop-blur-md animate-bounce">
           <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-          <span>กล้องสั่นไหว! โปรดถือให้นิ่งหรือวางบนขาตั้งเพื่อความแม่นยำ</span>
+          <span>กล้องสั่นไหว! โปรดถือให้นิ่งหรือเปิดโหมดขาตั้งกล้อง</span>
         </div>
       )}
 

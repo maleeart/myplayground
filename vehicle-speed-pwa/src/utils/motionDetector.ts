@@ -20,20 +20,18 @@ export class CameraMotionDetector {
   private lastAccel = { x: 0, y: 0, z: 0 };
   private accelDeltas: number[] = [];
   private hasSensor = false;
-
-  // Frame-difference visual fallback
-  private sampleCanvas: HTMLCanvasElement;
-  private sampleCtx: CanvasRenderingContext2D | null;
-  private prevSampleData: Uint8ClampedArray | null = null;
-  private visualDeltas: number[] = [];
+  public isTripodMode = true; // Default to true (ideal for speed estimation)
 
   constructor() {
-    this.sampleCanvas = document.createElement('canvas');
-    this.sampleCanvas.width = 64;
-    this.sampleCanvas.height = 48;
-    this.sampleCtx = this.sampleCanvas.getContext('2d', { willReadFrequently: true });
-
     this.initDeviceMotion();
+  }
+
+  public setTripodMode(enabled: boolean): void {
+    this.isTripodMode = enabled;
+    if (enabled) {
+      this.isShaking = false;
+      this.shakeIntensity = 0;
+    }
   }
 
   private initDeviceMotion(): void {
@@ -57,8 +55,9 @@ export class CameraMotionDetector {
         }
 
         const avgJerk = this.accelDeltas.reduce((a, b) => a + b, 0) / this.accelDeltas.length;
-        this.isShaking = avgJerk > 1.8;
-        this.shakeIntensity = Math.min(1.0, avgJerk / 4.0);
+        // Require significant physical jerk (> 2.8 m/s²) to avoid false positives
+        this.isShaking = avgJerk > 2.8;
+        this.shakeIntensity = Math.min(1.0, avgJerk / 5.0);
       };
 
       try {
@@ -70,51 +69,26 @@ export class CameraMotionDetector {
   }
 
   /**
-   * Evaluates frame difference on a 64x48 low-res thumbnail
-   * to catch rotational/translational camera shifts even if IMU sensor is unavailable.
+   * Evaluates camera motion.
+   * If Tripod Mode is active or no physical IMU sensor detects jerk, reports camera as stable.
    */
-  public evaluateFrame(videoOrCanvas: HTMLVideoElement | HTMLCanvasElement): MotionStatus {
-    if (!this.hasSensor && this.sampleCtx) {
-      this.sampleCtx.drawImage(videoOrCanvas, 0, 0, 64, 48);
-      const imgData = this.sampleCtx.getImageData(0, 0, 64, 48).data;
-
-      if (this.prevSampleData) {
-        let diffSum = 0;
-        const pixelCount = 64 * 48;
-
-        // Sample grayscale difference every 4 bytes (skip alpha)
-        for (let i = 0; i < imgData.length; i += 8) {
-          const lum1 = 0.299 * imgData[i] + 0.587 * imgData[i + 1] + 0.114 * imgData[i + 2];
-          const lum2 =
-            0.299 * this.prevSampleData[i] +
-            0.587 * this.prevSampleData[i + 1] +
-            0.114 * this.prevSampleData[i + 2];
-          diffSum += Math.abs(lum1 - lum2);
-        }
-
-        const avgDiff = diffSum / (pixelCount / 2);
-        this.visualDeltas.push(avgDiff);
-        if (this.visualDeltas.length > 10) {
-          this.visualDeltas.shift();
-        }
-
-        const avgVisualDiff =
-          this.visualDeltas.reduce((a, b) => a + b, 0) / this.visualDeltas.length;
-
-        // High global scene shift indicates camera panning or shaking
-        this.isShaking = avgVisualDiff > 18.0;
-        this.shakeIntensity = Math.min(1.0, avgVisualDiff / 35.0);
-      }
-
-      this.prevSampleData = new Uint8ClampedArray(imgData);
+  public evaluateFrame(_videoOrCanvas?: HTMLVideoElement | HTMLCanvasElement): MotionStatus {
+    // 1. In Tripod Mode or without physical IMU: always stable, never false alarm
+    if (this.isTripodMode || !this.hasSensor) {
+      return {
+        isShaking: false,
+        intensity: 0,
+        message: 'Tripod Mode Active (Rock Steady)',
+      };
     }
 
+    // 2. In Handheld Mode: rely on physical IMU accelerometer
     return {
       isShaking: this.isShaking,
       intensity: this.shakeIntensity,
       message: this.isShaking
-        ? '⚠️ Camera shake detected! Stabilize camera on a tripod for accurate speed measurements.'
-        : 'Camera stable',
+        ? '⚠️ ตรวจพบการสั่นไหวของกล้อง โปรดถือให้นิ่งหรือวางบนขาตั้ง'
+        : 'กล้องนิ่งเสถียร',
     };
   }
 }

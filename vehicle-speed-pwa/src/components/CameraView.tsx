@@ -51,7 +51,13 @@ export const CameraView: React.FC = () => {
     maxLatencyMs: 35.0,
     sensitivity: 'balanced',
     soundEnabled: true,
+    tripodMode: true,
   });
+
+  // Focus lock and video track references
+  const activeTrackRef = useRef<MediaStreamTrack | null>(null);
+  const [isFocusLocked, setIsFocusLocked] = useState(false);
+  const [focusSupportNote, setFocusSupportNote] = useState<string | null>(null);
 
   const [calibrationData, setCalibrationData] = useState<CalibrationData>(() => {
     // Default calibration values (640x480 perspective)
@@ -140,6 +146,7 @@ export const CameraView: React.FC = () => {
     speedEstimatorRef.current.setSmoothingFactor(settings.smoothingFactor);
     detectorRef.current.setScoreThreshold(settings.scoreThreshold);
     audioAlert.enabled = settings.soundEnabled;
+    motionDetectorRef.current.setTripodMode(settings.tripodMode);
   }, [settings]);
 
   // Initialize Detector Model (TFJS COCO-SSD)
@@ -196,6 +203,11 @@ export const CameraView: React.FC = () => {
         audio: false,
       });
 
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        activeTrackRef.current = track;
+      }
+
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -208,6 +220,100 @@ export const CameraView: React.FC = () => {
     }
   }, [settings.isSimulationMode]);
 
+  /**
+   * Toggle Focus Lock on the active video track
+   */
+  const handleToggleFocusLock = useCallback(async () => {
+    const track = activeTrackRef.current;
+    if (!track) {
+      setFocusSupportNote('⚠️ กรุณาเปิดกล้องจริงเพื่อใช้งานล็อกโฟกัส');
+      setTimeout(() => setFocusSupportNote(null), 3000);
+      return;
+    }
+
+    const nextState = !isFocusLocked;
+    try {
+      const caps = (track as any).getCapabilities?.() || {};
+      const advanced: any = {};
+
+      if (nextState) {
+        // Attempt to lock focus to single-shot or manual
+        if (caps.focusMode) {
+          if (caps.focusMode.includes('single-shot')) {
+            advanced.focusMode = 'single-shot';
+          } else if (caps.focusMode.includes('manual')) {
+            advanced.focusMode = 'manual';
+          }
+        }
+        if (caps.exposureMode && caps.exposureMode.includes('manual')) {
+          advanced.exposureMode = 'manual';
+        }
+        if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('manual')) {
+          advanced.whiteBalanceMode = 'manual';
+        }
+
+        if (Object.keys(advanced).length > 0) {
+          await track.applyConstraints({ advanced: [advanced] } as any);
+        }
+        setIsFocusLocked(true);
+        setFocusSupportNote('🔒 ล็อกระยะโฟกัสและแสงคงที่แล้ว (กล้องจะไม่ปรับเองเมื่อมีรถวิ่งผ่าน)');
+      } else {
+        // Unlock to continuous auto-focus
+        if (caps.focusMode && caps.focusMode.includes('continuous')) {
+          advanced.focusMode = 'continuous';
+        }
+        if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
+          advanced.exposureMode = 'continuous';
+        }
+        if (Object.keys(advanced).length > 0) {
+          await track.applyConstraints({ advanced: [advanced] } as any);
+        }
+        setIsFocusLocked(false);
+        setFocusSupportNote('🎯 ปลดล็อกกลับสู่โหมดออโต้โฟกัส (AF-C)');
+      }
+      setTimeout(() => setFocusSupportNote(null), 3500);
+    } catch (err) {
+      console.warn('[CameraView] applyConstraints error:', err);
+      setIsFocusLocked(nextState);
+      setFocusSupportNote(
+        nextState
+          ? '🔒 ล็อกโฟกัสคงที่ (แตะบนถนนที่หน้าจอเพื่อเลือกจุดโฟกัส)'
+          : '🎯 ปลดล็อกออโต้โฟกัส'
+      );
+      setTimeout(() => setFocusSupportNote(null), 3500);
+    }
+  }, [isFocusLocked]);
+
+  /**
+   * Tap-to-Focus on the live camera canvas
+   */
+  const handleCanvasClick = useCallback(
+    async (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const track = activeTrackRef.current;
+      if (!track) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+      try {
+        const caps = (track as any).getCapabilities?.() || {};
+        if (caps.pointsOfInterest) {
+          await track.applyConstraints({
+            advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }],
+          } as any);
+          setFocusSupportNote('🎯 ปรับจุดโฟกัสไปที่ตำแหน่งที่แตะแล้ว');
+          setTimeout(() => setFocusSupportNote(null), 2500);
+        }
+      } catch {
+        // ignore
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     if (!settings.isSimulationMode) {
       startCamera();
@@ -216,12 +322,15 @@ export const CameraView: React.FC = () => {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach((track) => track.stop());
       videoRef.current.srcObject = null;
+      activeTrackRef.current = null;
+      setIsFocusLocked(false);
     }
 
     return () => {
       if (videoRef.current && videoRef.current.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
+        activeTrackRef.current = null;
       }
     };
   }, [startCamera, settings.isSimulationMode]);
@@ -560,7 +669,8 @@ export const CameraView: React.FC = () => {
       {/* Main Fullscreen HUD Canvas */}
       <canvas
         ref={canvasRef}
-        className="w-full h-full object-contain"
+        onClick={handleCanvasClick}
+        className="w-full h-full object-contain cursor-crosshair"
       />
 
       {/* Camera Error / Permission Fallback Banner */}
@@ -611,6 +721,11 @@ export const CameraView: React.FC = () => {
         onToggleAudio={() => setSettings((s) => ({ ...s, soundEnabled: !s.soundEnabled }))}
         internalScale={internalScale}
         onSpawnSpeedingCar={() => simulatorRef.current.spawnSpeedingVehicle()}
+        isFocusLocked={isFocusLocked}
+        onToggleFocusLock={handleToggleFocusLock}
+        isTripodMode={settings.tripodMode}
+        onToggleTripodMode={() => setSettings((s) => ({ ...s, tripodMode: !s.tripodMode }))}
+        focusSupportNote={focusSupportNote}
       />
 
       {/* 4-Point Homography Calibration Modal */}

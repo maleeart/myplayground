@@ -21,6 +21,7 @@ export interface AppSettings {
   maxLatencyMs: number;
   sensitivity: 'ultra' | 'balanced' | 'strict';
   soundEnabled: boolean;
+  tripodMode: boolean;
 }
 
 interface SettingsDrawerProps {
@@ -134,6 +135,28 @@ export const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
             </div>
             <p className="text-[11px] text-slate-500">
               หากตรวจจับรถไม่ค่อยติด ให้เลือก "สูง" เพื่อช่วยจับรถที่วิ่งเร็วหรืออยู่ไกลได้ง่ายขึ้น
+            </p>
+          </div>
+
+          {/* Tripod Mode & Camera Stability */}
+          <div className="bg-slate-850 p-3 rounded-xl border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-300 font-medium text-xs flex items-center gap-1.5">
+                <span>🔭 โหมดขาตั้งกล้อง (Tripod Mode)</span>
+              </span>
+              <button
+                onClick={() => onUpdateSettings({ tripodMode: !settings.tripodMode })}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold border transition ${
+                  settings.tripodMode
+                    ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}
+              >
+                {settings.tripodMode ? 'เปิดใช้งาน (เปิด)' : 'ถือด้วยมือ (ปิด)'}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              เมื่อเปิดใช้งาน: ปิดการเตือนกล้องสั่นไหว ป้องกันการแจ้งเตือนผิดพลาดเวลารถวิ่งผ่านหน้ากล้อง
             </p>
           </div>
 
