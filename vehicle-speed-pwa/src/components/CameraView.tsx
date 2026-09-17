@@ -1,83 +1,57 @@
 /**
- * Main Camera & Overlay Rendering View
+ * Ultra-Fast Optical Motion Speedometer & Camera View
  * 
- * Manages:
- * 1. Mobile rear camera stream (getUserMedia with 'environment' facingMode) or TrafficSimulator.
- * 2. High-performance requestAnimationFrame canvas rendering loop.
- * 3. Computer Vision detection loop (COCO-SSD with dynamic throttling & sensitivity tuning).
- * 4. ByteTrack Kalman prediction & tracking at full 60 FPS.
- * 5. Homography perspective mapping & real-time speed overlay.
- * 6. Automatic Detection Logging & Photo Snapshotting for review.
+ * Rebuilt from the ground up:
+ * - Pure Frame-to-Frame Differencing (เปรียบเทียบเฟรมต่อเฟรม): Instantly locks onto ANY moving object!
+ * - 60 FPS sub-millisecond execution (No slow neural net loading or dropouts)
+ * - Automatic velocity estimation in km/h based on distance reference
+ * - Auto-snapshot capture and persistent detection history log
+ * - Clean, distraction-free interface with quick 1-tap distance and sensitivity controls
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { VehicleDetector } from '../core/detector';
-import { ByteTracker } from '../core/tracker';
-import type { CalibrationData } from '../core/homography';
-import { Homography } from '../core/homography';
-import type { VehicleSpeedStats } from '../core/speedEstimator';
-import { SpeedEstimator } from '../core/speedEstimator';
-import type { MotionStatus } from '../utils/motionDetector';
-import { CameraMotionDetector } from '../utils/motionDetector';
-import { TrafficSimulator } from '../utils/simulator';
-import { MetricsOverlay } from './MetricsOverlay';
-import { CalibrationModal } from './CalibrationModal';
-import type { AppSettings } from './SettingsDrawer';
-import { SettingsDrawer } from './SettingsDrawer';
-import type { DetectionRecord } from './DetectionHistoryDrawer';
-import { DetectionHistoryDrawer } from './DetectionHistoryDrawer';
+import { MotionTracker, type MotionBlob } from '../core/motionTracker';
+import { DetectionHistoryDrawer, type DetectionRecord } from './DetectionHistoryDrawer';
 import { audioAlert } from '../utils/audioAlert';
-import { Camera, RefreshCw } from 'lucide-react';
+import {
+  Camera,
+  RefreshCw,
+  ClipboardList,
+  Volume2,
+  VolumeX,
+  Lock,
+  Unlock,
+  Activity,
+  Zap,
+} from 'lucide-react';
 
 export const CameraView: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  // Engines
-  const detectorRef = useRef<VehicleDetector>(new VehicleDetector());
-  const trackerRef = useRef<ByteTracker>(new ByteTracker());
-  const homographyRef = useRef<Homography>(new Homography());
-  const speedEstimatorRef = useRef<SpeedEstimator>(new SpeedEstimator());
-  const motionDetectorRef = useRef<CameraMotionDetector>(new CameraMotionDetector());
-  const simulatorRef = useRef<TrafficSimulator>(new TrafficSimulator(640, 480));
-
-  // Settings & State
-  const [settings, setSettings] = useState<AppSettings>({
-    speedLimitKmh: 60,
-    smoothingFactor: 0.35,
-    scoreThreshold: 0.22,
-    isSimulationMode: false,
-    adaptiveThrottling: true,
-    maxLatencyMs: 35.0,
-    sensitivity: 'balanced',
-    soundEnabled: true,
-    tripodMode: true,
-  });
-
-  // Focus lock and video track references
   const activeTrackRef = useRef<MediaStreamTrack | null>(null);
-  const [isFocusLocked, setIsFocusLocked] = useState(false);
-  const [focusSupportNote, setFocusSupportNote] = useState<string | null>(null);
 
-  const [calibrationData, setCalibrationData] = useState<CalibrationData>(() => {
-    // Default calibration values (640x480 perspective)
-    return {
-      imagePoints: [
-        { x: 220, y: 190 },
-        { x: 420, y: 190 },
-        { x: 550, y: 440 },
-        { x: 90, y: 440 },
-      ],
-      roadWidthMeters: 7.0,
-      roadLengthMeters: 30.0,
-    };
-  });
+  // Motion Tracker Engine (Frame Differencing)
+  const motionTrackerRef = useRef<MotionTracker>(
+    new MotionTracker({
+      distanceMeters: 15.0,
+      sensitivity: 'medium',
+      minAreaPx: 900,
+    })
+  );
 
-  const [isCalibrated, setIsCalibrated] = useState(false);
-  const [isCalibModalOpen, setIsCalibModalOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  // Settings & Controls
+  const [distanceMeters, setDistanceMeters] = useState<number>(15);
+  const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('medium');
+  const [speedLimitKmh, setSpeedLimitKmh] = useState<number>(60);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [isFocusLocked, setIsFocusLocked] = useState<boolean>(false);
+  const [toastNote, setToastNote] = useState<string | null>(null);
+
+  // UI Drawers & State
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [fps, setFps] = useState<number>(0);
+  const [activeBlobs, setActiveBlobs] = useState<MotionBlob[]>([]);
 
   // Detection History records
   const [records, setRecords] = useState<DetectionRecord[]>(() => {
@@ -88,76 +62,21 @@ export const CameraView: React.FC = () => {
       return [];
     }
   });
-  const loggedTracksRef = useRef<Set<number>>(new Set());
-  const realCalibrationRef = useRef<CalibrationData | null>(null);
 
-  // Switch calibration and reset tracker when toggling Simulation Mode
-  useEffect(() => {
-    if (settings.isSimulationMode) {
-      if (!realCalibrationRef.current) {
-        realCalibrationRef.current = { ...calibrationData };
-      }
-      const simCalib = simulatorRef.current.getSimCalibration();
-      setCalibrationData(simCalib);
-      homographyRef.current.compute(simCalib);
-      setIsCalibrated(true);
-      trackerRef.current = new ByteTracker({ highScoreThresh: 0.22, lowScoreThresh: 0.10, maxAge: 30 });
-      loggedTracksRef.current.clear();
-      setStatsMap(new Map());
-    } else {
-      if (realCalibrationRef.current) {
-        setCalibrationData(realCalibrationRef.current);
-        homographyRef.current.compute(realCalibrationRef.current);
-        realCalibrationRef.current = null;
-      }
-      trackerRef.current = new ByteTracker({ highScoreThresh: 0.22, lowScoreThresh: 0.10, maxAge: 30 });
-      loggedTracksRef.current.clear();
-      setStatsMap(new Map());
-    }
-  }, [settings.isSimulationMode]);
-
-  // HUD stats
-  const [fps, setFps] = useState(0);
-  const [inferenceLatencyMs, setInferenceLatencyMs] = useState(0);
-  const [internalScale, setInternalScale] = useState(1.0);
-  const [motionStatus, setMotionStatus] = useState<MotionStatus>({
-    isShaking: false,
-    intensity: 0,
-    message: 'Stable',
-  });
-  const [statsMap, setStatsMap] = useState<Map<number, VehicleSpeedStats>>(new Map());
-
-  // FPS calculation
+  // Loop refs
   const frameCountRef = useRef(0);
   const lastFpsCalcRef = useRef(performance.now());
-  const isDetectingRef = useRef(false);
   const animationFrameIdRef = useRef<number | null>(null);
 
-  // Initialize Homography with default calibration
+  // Sync config with tracker
   useEffect(() => {
-    const success = homographyRef.current.compute(calibrationData);
-    setIsCalibrated(success);
-    speedEstimatorRef.current.setHomography(homographyRef.current);
-  }, [calibrationData]);
-
-  // Sync settings with engines
-  useEffect(() => {
-    speedEstimatorRef.current.setSpeedLimit(settings.speedLimitKmh);
-    speedEstimatorRef.current.setSmoothingFactor(settings.smoothingFactor);
-    detectorRef.current.setScoreThreshold(settings.scoreThreshold);
-    audioAlert.enabled = settings.soundEnabled;
-    motionDetectorRef.current.setTripodMode(settings.tripodMode);
-  }, [settings]);
-
-  // Initialize Detector Model (TFJS COCO-SSD)
-  useEffect(() => {
-    detectorRef.current.init().catch((err) => {
-      console.error('Failed to load detector:', err);
-    });
-  }, []);
+    motionTrackerRef.current.config.distanceMeters = distanceMeters;
+    motionTrackerRef.current.config.sensitivity = sensitivity;
+    audioAlert.enabled = soundEnabled;
+  }, [distanceMeters, sensitivity, soundEnabled]);
 
   /**
-   * Helper to crop a snapshot thumbnail from video/simulator canvas
+   * Capture a cropped snapshot of the moving object from full-resolution video
    */
   const captureSnapshot = (
     src: HTMLVideoElement | HTMLCanvasElement,
@@ -165,29 +84,34 @@ export const CameraView: React.FC = () => {
   ): string | undefined => {
     try {
       const snapCanvas = document.createElement('canvas');
-      snapCanvas.width = 96;
-      snapCanvas.height = 96;
+      snapCanvas.width = 128;
+      snapCanvas.height = 128;
       const sCtx = snapCanvas.getContext('2d');
       if (!sCtx) return undefined;
-      const pad = 12;
-      const sx = Math.max(0, bbox.x - pad);
-      const sy = Math.max(0, bbox.y - pad);
-      const sw = bbox.w + pad * 2;
-      const sh = bbox.h + pad * 2;
-      sCtx.drawImage(src, sx, sy, sw, sh, 0, 0, 96, 96);
-      return snapCanvas.toDataURL('image/jpeg', 0.6);
+
+      const srcW = src instanceof HTMLVideoElement ? src.videoWidth : src.width;
+      const srcH = src instanceof HTMLVideoElement ? src.videoHeight : src.height;
+
+      // Expand margin 25% around moving object for context
+      const marginX = bbox.w * 0.25;
+      const marginY = bbox.h * 0.25;
+      const sx = Math.max(0, bbox.x - marginX);
+      const sy = Math.max(0, bbox.y - marginY);
+      const sw = Math.min(srcW - sx, bbox.w + marginX * 2);
+      const sh = Math.min(srcH - sy, bbox.h + marginY * 2);
+
+      sCtx.drawImage(src, sx, sy, sw, sh, 0, 0, 128, 128);
+      return snapCanvas.toDataURL('image/jpeg', 0.65);
     } catch {
       return undefined;
     }
   };
 
   /**
-   * Setup Mobile Rear Camera stream
+   * Start rear camera stream
    */
   const startCamera = useCallback(async () => {
     setCameraError(null);
-    if (settings.isSimulationMode) return;
-
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Camera API (getUserMedia) not supported or requires HTTPS.');
@@ -195,7 +119,7 @@ export const CameraView: React.FC = () => {
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: { ideal: 'environment' }, // Rear camera
+          facingMode: { ideal: 'environment' },
           width: { ideal: 1280, max: 1920 },
           height: { ideal: 720, max: 1080 },
           frameRate: { ideal: 60, min: 30 },
@@ -212,22 +136,33 @@ export const CameraView: React.FC = () => {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
+
+      motionTrackerRef.current.reset();
     } catch (err: any) {
-      console.warn('[Camera] Failed to access rear camera:', err);
-      setCameraError(
-        err.message || 'Unable to access rear camera. Switching to Simulator Mode is recommended.'
-      );
+      console.warn('[Camera] Access error:', err);
+      setCameraError(err.message || 'Unable to access rear camera. Please ensure camera permissions are granted.');
     }
-  }, [settings.isSimulationMode]);
+  }, []);
+
+  useEffect(() => {
+    startCamera();
+    return () => {
+      if (videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach((track) => track.stop());
+        activeTrackRef.current = null;
+      }
+    };
+  }, [startCamera]);
 
   /**
-   * Toggle Focus Lock on the active video track
+   * Toggle Focus Lock on camera
    */
   const handleToggleFocusLock = useCallback(async () => {
     const track = activeTrackRef.current;
     if (!track) {
-      setFocusSupportNote('⚠️ กรุณาเปิดกล้องจริงเพื่อใช้งานล็อกโฟกัส');
-      setTimeout(() => setFocusSupportNote(null), 3000);
+      setToastNote('⚠️ กรุณารอกล้องพร้อมใช้งาน');
+      setTimeout(() => setToastNote(null), 2500);
       return;
     }
 
@@ -237,110 +172,72 @@ export const CameraView: React.FC = () => {
       const advanced: any = {};
 
       if (nextState) {
-        // Attempt to lock focus to single-shot or manual
         if (caps.focusMode) {
-          if (caps.focusMode.includes('single-shot')) {
-            advanced.focusMode = 'single-shot';
-          } else if (caps.focusMode.includes('manual')) {
-            advanced.focusMode = 'manual';
-          }
+          advanced.focusMode = caps.focusMode.includes('single-shot')
+            ? 'single-shot'
+            : caps.focusMode.includes('manual')
+            ? 'manual'
+            : 'continuous';
         }
         if (caps.exposureMode && caps.exposureMode.includes('manual')) {
           advanced.exposureMode = 'manual';
         }
-        if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('manual')) {
-          advanced.whiteBalanceMode = 'manual';
-        }
-
         if (Object.keys(advanced).length > 0) {
           await track.applyConstraints({ advanced: [advanced] } as any);
         }
         setIsFocusLocked(true);
-        setFocusSupportNote('🔒 ล็อกระยะโฟกัสและแสงคงที่แล้ว (กล้องจะไม่ปรับเองเมื่อมีรถวิ่งผ่าน)');
+        setToastNote('🔒 ล็อกโฟกัสคงที่แล้ว (กล้องจะไม่ปรับเองเมื่อมีสิ่งเคลื่อนไหวผ่าน)');
       } else {
-        // Unlock to continuous auto-focus
         if (caps.focusMode && caps.focusMode.includes('continuous')) {
           advanced.focusMode = 'continuous';
-        }
-        if (caps.exposureMode && caps.exposureMode.includes('continuous')) {
-          advanced.exposureMode = 'continuous';
         }
         if (Object.keys(advanced).length > 0) {
           await track.applyConstraints({ advanced: [advanced] } as any);
         }
         setIsFocusLocked(false);
-        setFocusSupportNote('🎯 ปลดล็อกกลับสู่โหมดออโต้โฟกัส (AF-C)');
+        setToastNote('🎯 ปลดล็อกสู่โหมดออโต้โฟกัส');
       }
-      setTimeout(() => setFocusSupportNote(null), 3500);
-    } catch (err) {
-      console.warn('[CameraView] applyConstraints error:', err);
+      setTimeout(() => setToastNote(null), 3000);
+    } catch {
       setIsFocusLocked(nextState);
-      setFocusSupportNote(
-        nextState
-          ? '🔒 ล็อกโฟกัสคงที่ (แตะบนถนนที่หน้าจอเพื่อเลือกจุดโฟกัส)'
-          : '🎯 ปลดล็อกออโต้โฟกัส'
-      );
-      setTimeout(() => setFocusSupportNote(null), 3500);
+      setToastNote(nextState ? '🔒 ล็อกโฟกัสแล้ว' : '🎯 ปลดล็อกโฟกัส');
+      setTimeout(() => setToastNote(null), 3000);
     }
   }, [isFocusLocked]);
 
   /**
-   * Tap-to-Focus on the live camera canvas
+   * Tap-to-Focus on camera canvas
    */
-  const handleCanvasClick = useCallback(
-    async (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const track = activeTrackRef.current;
-      if (!track) return;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
+  const handleCanvasClick = useCallback(async (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const track = activeTrackRef.current;
+    if (!track) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-      const rect = canvas.getBoundingClientRect();
-      const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const rect = canvas.getBoundingClientRect();
+    const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
 
-      try {
-        const caps = (track as any).getCapabilities?.() || {};
-        if (caps.pointsOfInterest) {
-          await track.applyConstraints({
-            advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }],
-          } as any);
-          setFocusSupportNote('🎯 ปรับจุดโฟกัสไปที่ตำแหน่งที่แตะแล้ว');
-          setTimeout(() => setFocusSupportNote(null), 2500);
-        }
-      } catch {
-        // ignore
+    try {
+      const caps = (track as any).getCapabilities?.() || {};
+      if (caps.pointsOfInterest) {
+        await track.applyConstraints({
+          advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }],
+        } as any);
+        setToastNote('🎯 ปรับจุดโฟกัสไปที่ตำแหน่งที่แตะแล้ว');
+        setTimeout(() => setToastNote(null), 2000);
       }
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (!settings.isSimulationMode) {
-      startCamera();
-    } else if (videoRef.current && videoRef.current.srcObject) {
-      // Stop camera tracks when in simulator mode
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
-      videoRef.current.srcObject = null;
-      activeTrackRef.current = null;
-      setIsFocusLocked(false);
+    } catch {
+      // ignore
     }
-
-    return () => {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-        activeTrackRef.current = null;
-      }
-    };
-  }, [startCamera, settings.isSimulationMode]);
+  }, []);
 
   /**
-   * Main Render and Processing Loop (60 FPS)
+   * Main Render and Motion Tracking Loop (Full 60 FPS)
    */
   useEffect(() => {
-    const loop = async (timestamp: number) => {
-      // 1. Calculate FPS
+    const loop = (timestamp: number) => {
+      // FPS calculation
       frameCountRef.current++;
       if (timestamp - lastFpsCalcRef.current >= 1000) {
         setFps(frameCountRef.current);
@@ -349,112 +246,49 @@ export const CameraView: React.FC = () => {
       }
 
       const canvas = canvasRef.current;
-      if (!canvas) {
+      const video = videoRef.current;
+      if (!canvas || !video) {
         animationFrameIdRef.current = requestAnimationFrame(loop);
         return;
       }
+
       const ctx = canvas.getContext('2d');
       if (!ctx) {
         animationFrameIdRef.current = requestAnimationFrame(loop);
         return;
       }
 
-      // 2. Select Video Frame Source (Camera or Simulator)
-      let source: HTMLVideoElement | HTMLCanvasElement | null = null;
-      if (settings.isSimulationMode) {
-        source = simulatorRef.current.render(timestamp);
-      } else if (
-        videoRef.current &&
-        videoRef.current.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
-      ) {
-        source = videoRef.current;
-      }
-
-      if (!source) {
-        // Render standby grid while camera is initializing so screen is never blank
-        if (canvas.width === 0 || canvas.height === 0) {
-          canvas.width = 640;
-          canvas.height = 480;
-        }
-        ctx.fillStyle = '#020617';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(canvas.width / 2, 0);
-        ctx.lineTo(canvas.width / 2, canvas.height);
-        ctx.moveTo(0, canvas.height / 2);
-        ctx.lineTo(canvas.width, canvas.height / 2);
-        ctx.arc(canvas.width / 2, canvas.height / 2, 80, 0, Math.PI * 2);
-        ctx.arc(canvas.width / 2, canvas.height / 2, 160, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 13px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('📡 INITIALIZING CAMERA STREAM...', canvas.width / 2, canvas.height / 2 - 8);
-        ctx.font = '11px sans-serif';
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText('Tap Allow for camera permission or switch to Simulator Mode', canvas.width / 2, canvas.height / 2 + 16);
-        ctx.textAlign = 'left';
-
-        animationFrameIdRef.current = requestAnimationFrame(loop);
-        return;
-      }
-
-      // Match canvas dimensions to source resolution
-      const srcW = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
-      const srcH = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
-
-      if (srcW > 0 && srcH > 0) {
-        if (canvas.width !== srcW || canvas.height !== srcH) {
-          canvas.width = srcW;
-          canvas.height = srcH;
+      // Ensure video is playing with valid dimensions
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
         }
 
-        // Draw source video/sim frame to canvas
-        ctx.drawImage(source, 0, 0, srcW, srcH);
-      }
+        // Draw live camera frame
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // 3. Motion & Shake detection
-      const motion = motionDetectorRef.current.evaluateFrame(source);
-      setMotionStatus(motion);
+        // 1. Process Frame Differencing & Motion Tracking
+        const { blobs, newlyDetectedForLogging } = motionTrackerRef.current.processFrame(video, timestamp);
+        setActiveBlobs(blobs);
 
-      // Helper function to update speed estimator, HUD stats, and auto-logging
-      const processTracksAndLog = (
-        activeTracks: ReturnType<typeof trackerRef.current.update>,
-        currentTimestamp: number,
-        frameSource: HTMLVideoElement | HTMLCanvasElement
-      ) => {
-        // Feed active tracks to Speed Estimator
-        const calculatedStats = speedEstimatorRef.current.update(activeTracks, currentTimestamp);
-        setStatsMap(calculatedStats);
-
-        // Auto-Log Vehicles with Peak Speeds
-        calculatedStats.forEach((stat, trackId) => {
-          if (stat.currentSpeedKmh > 5 && !loggedTracksRef.current.has(trackId)) {
-            loggedTracksRef.current.add(trackId);
-
-            // Snapshot thumbnail
-            const trk = trackerRef.current.getTrackById(trackId);
-            let snapUrl: string | undefined = undefined;
-            if (trk && frameSource) {
-              snapUrl = captureSnapshot(frameSource, trk.getBbox());
-            }
-
+        // 2. Handle Auto-Snapshot & Logging for newly confirmed moving objects
+        if (newlyDetectedForLogging.length > 0) {
+          for (const blob of newlyDetectedForLogging) {
+            const snapUrl = captureSnapshot(video, blob.bbox);
             const now = new Date();
             const timeStr = now.toTimeString().split(' ')[0];
+            const isOver = blob.peakSpeedKmh > speedLimitKmh;
 
             const newRecord: DetectionRecord = {
-              id: `${trackId}-${Date.now()}`,
-              trackId,
-              vehicleClass: stat.vehicleClass,
+              id: `${blob.id}-${Date.now()}`,
+              trackId: blob.id,
+              vehicleClass: 'วัตถุเคลื่อนไหว',
               timestamp: timeStr,
-              peakSpeedKmh: Math.round(stat.currentSpeedKmh),
-              avgSpeedKmh: Math.round(stat.averageSpeedKmh || stat.currentSpeedKmh),
-              distanceMeters: Math.round(stat.distanceTraveledMeters),
-              isOverLimit: stat.isOverLimit,
+              peakSpeedKmh: blob.peakSpeedKmh,
+              avgSpeedKmh: blob.avgSpeedKmh || blob.peakSpeedKmh,
+              distanceMeters: Math.round(blob.distanceTraveledPx / (canvas.width / (1.28 * distanceMeters))),
+              isOverLimit: isOver,
               snapshotUrl: snapUrl,
             };
 
@@ -468,47 +302,32 @@ export const CameraView: React.FC = () => {
               return updated;
             });
 
-            // Audio Chime
-            if (stat.isOverLimit) {
+            // Audio Blip / Alarm
+            if (isOver) {
               audioAlert.playOverspeedAlarm();
             } else {
               audioAlert.playDetectBlip();
             }
           }
-        });
-      };
+        }
 
-      // 4. Vehicle Detection (Simulation Mode vs Real Camera AI)
-      if (settings.isSimulationMode) {
-        // Ground-truth detections from simulator with realistic micro-jitter
-        const simDetections = simulatorRef.current.getDetections();
-        setInferenceLatencyMs(12);
-        setInternalScale(1.0);
+        // 3. Render Motion HUD Overlays
+        drawMotionOverlays(ctx, blobs, canvas.width, canvas.height);
+      } else {
+        // Standby Screen
+        if (canvas.width === 0 || canvas.height === 0) {
+          canvas.width = 640;
+          canvas.height = 480;
+        }
+        ctx.fillStyle = '#020617';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        const activeTracks = trackerRef.current.update(simDetections, timestamp);
-        processTracksAndLog(activeTracks, timestamp, source);
-      } else if (!isDetectingRef.current && detectorRef.current.ready) {
-        isDetectingRef.current = true;
-        detectorRef.current
-          .detect(source)
-          .then(({ detections, latencyMs, scale }) => {
-            setInferenceLatencyMs(latencyMs);
-            setInternalScale(scale);
-
-            // Feed detections to ByteTrack
-            const activeTracks = trackerRef.current.update(detections, timestamp);
-            processTracksAndLog(activeTracks, timestamp, source);
-          })
-          .catch((err) => {
-            console.error('Detection error:', err);
-          })
-          .finally(() => {
-            isDetectingRef.current = false;
-          });
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('📡 กำลังเชื่อมต่อกล้องมือถือ...', canvas.width / 2, canvas.height / 2);
+        ctx.textAlign = 'left';
       }
-
-      // 5. Draw Overlays (Calibration Zone, Bounding Boxes, Trajectory Trails, Speed HUD)
-      drawOverlays(ctx);
 
       animationFrameIdRef.current = requestAnimationFrame(loop);
     };
@@ -520,52 +339,28 @@ export const CameraView: React.FC = () => {
         cancelAnimationFrame(animationFrameIdRef.current);
       }
     };
-  }, [settings.isSimulationMode, calibrationData]);
+  }, [distanceMeters, speedLimitKmh]);
 
   /**
-   * Draw Visual Overlays onto the Canvas
+   * Draw glowing motion bounding boxes, trajectory trails, and speed badges
    */
-  const drawOverlays = (ctx: CanvasRenderingContext2D) => {
-    // 1. Draw Calibrated Road Zone (Perspective Trapezoid)
-    if (calibrationData.imagePoints.length === 4) {
-      const pts = calibrationData.imagePoints;
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      ctx.lineTo(pts[1].x, pts[1].y);
-      ctx.lineTo(pts[2].x, pts[2].y);
-      ctx.lineTo(pts[3].x, pts[3].y);
-      ctx.closePath();
+  const drawMotionOverlays = (
+    ctx: CanvasRenderingContext2D,
+    blobs: MotionBlob[],
+    _width: number,
+    _height: number
+  ) => {
+    for (const blob of blobs) {
+      const { bbox, centroid, history, currentSpeedKmh } = blob;
+      const isOver = currentSpeedKmh > speedLimitKmh;
+      const isMoving = currentSpeedKmh > 5;
+      const themeColor = isOver ? '#ef4444' : isMoving ? '#10b981' : '#38bdf8';
 
-      // Subtle translucent fill
-      ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
-      ctx.fill();
-
-      // Dashed boundary
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([8, 6]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // 2. Draw Tracked Vehicles
-    statsMap.forEach((stats, trackId) => {
-      // Find matching track
-      const track = trackerRef.current.getTrackById(trackId);
-      if (!track) return;
-
-      const bbox = track.getBbox();
-      const basePoint = track.getBottomCenter();
-
-      const isOver = stats.currentSpeedKmh > settings.speedLimitKmh;
-      const isNear = stats.currentSpeedKmh > settings.speedLimitKmh - 10;
-      const themeColor = isOver ? '#ef4444' : isNear ? '#f59e0b' : '#10b981';
-
-      // Trajectory Trail (Smooth fading neon line)
-      if (track.history.length > 1) {
+      // 1. Trajectory Trail (Smooth neon trail)
+      if (history.length > 1) {
         ctx.beginPath();
-        for (let i = 0; i < track.history.length; i++) {
-          const pt = track.history[i].pixel;
+        for (let i = 0; i < history.length; i++) {
+          const pt = history[i];
           if (i === 0) {
             ctx.moveTo(pt.x, pt.y);
           } else {
@@ -578,19 +373,10 @@ export const CameraView: React.FC = () => {
         ctx.stroke();
       }
 
-      // Ground contact point dot
-      ctx.beginPath();
-      ctx.arc(basePoint.x, basePoint.y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // High-Tech Corner Bracket Bounding Box
-      const cornerLen = Math.min(bbox.w, bbox.h) * 0.25;
+      // 2. High-Tech Corner Brackets around moving object
+      const cornerLen = Math.min(bbox.w, bbox.h) * 0.28;
       ctx.strokeStyle = themeColor;
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = 3;
 
       // Top-Left
       ctx.beginPath();
@@ -620,44 +406,40 @@ export const CameraView: React.FC = () => {
       ctx.lineTo(bbox.x, bbox.y + bbox.h - cornerLen);
       ctx.stroke();
 
-      // Vehicle Speed Badge Overlay above bounding box
-      const badgeW = 100;
-      const badgeH = 28;
-      const badgeX = bbox.x + bbox.w / 2 - badgeW / 2;
-      const badgeY = Math.max(10, bbox.y - badgeH - 6);
+      // 3. Centroid Crosshair
+      ctx.fillStyle = themeColor;
+      ctx.beginPath();
+      ctx.arc(centroid.x, centroid.y, 4, 0, Math.PI * 2);
+      ctx.fill();
 
-      // Badge background
+      // 4. Live Speed Badge Overlay
+      const badgeW = 120;
+      const badgeH = 30;
+      const badgeX = bbox.x + bbox.w / 2 - badgeW / 2;
+      const badgeY = Math.max(10, bbox.y - badgeH - 8);
+
       ctx.fillStyle = isOver ? 'rgba(239, 68, 68, 0.92)' : 'rgba(15, 23, 42, 0.88)';
       ctx.beginPath();
-      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, [8]);
       ctx.fill();
-      ctx.strokeStyle = themeColor;
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = isOver ? '#fca5a5' : themeColor;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
 
-      // Vehicle ID and Class
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = 'bold 9px monospace';
-      ctx.fillText(`#${track.id} ${track.class.toUpperCase()}`, badgeX + 6, badgeY + 11);
-
-      // Speed Readout
       ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(`วัตถุ #${blob.id}`, badgeX + 8, badgeY + 14);
+
+      ctx.fillStyle = isOver ? '#ffffff' : '#38bdf8';
       ctx.font = 'bold 13px monospace';
-      let speedText = '';
-      if (!isCalibrated) {
-        speedText = 'UNCALIBRATED';
-      } else if (stats.currentSpeedKmh > 0) {
-        speedText = `${stats.currentSpeedKmh} km/h`;
-      } else {
-        speedText = 'LOCKING...';
-      }
-      ctx.fillText(speedText, badgeX + 6, badgeY + 24);
-    });
+      const speedStr = currentSpeedKmh > 0 ? `${currentSpeedKmh} km/h` : 'คำนวณ...';
+      ctx.fillText(speedStr, badgeX + 8, badgeY + 26);
+    }
   };
 
   return (
-    <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center">
-      {/* Hidden Mobile Video Element for getUserMedia */}
+    <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center select-none">
+      {/* Hidden Mobile Video Stream */}
       <video
         ref={videoRef}
         playsInline
@@ -666,89 +448,208 @@ export const CameraView: React.FC = () => {
         className="hidden"
       />
 
-      {/* Main Fullscreen HUD Canvas */}
+      {/* Main 60 FPS Canvas Feed */}
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
         className="w-full h-full object-contain cursor-crosshair"
       />
 
-      {/* Camera Error / Permission Fallback Banner */}
-      {cameraError && !settings.isSimulationMode && (
-        <div className="absolute top-16 left-4 right-4 bg-slate-900/90 border border-amber-600/60 text-amber-200 p-3.5 rounded-2xl backdrop-blur-md shadow-2xl flex flex-col gap-2 z-20">
-          <div className="flex items-center gap-2 font-semibold text-sm">
-            <Camera className="w-5 h-5 text-amber-400 shrink-0" />
-            <span>Rear Camera Notice</span>
+      {/* Camera Error Notice */}
+      {cameraError && (
+        <div className="absolute top-16 left-4 right-4 bg-slate-900/95 border border-amber-600 text-amber-200 p-4 rounded-2xl shadow-2xl flex flex-col gap-2 z-30">
+          <div className="flex items-center gap-2 font-bold text-sm">
+            <Camera className="w-5 h-5 text-amber-400" />
+            <span>ต้องการสิทธิ์การเข้าถึงกล้อง</span>
           </div>
           <p className="text-xs text-slate-300">
-            {cameraError}
-            <br />
-            (Note: Mobile browsers require HTTPS to grant camera permissions).
+            {cameraError} (ต้องเปิดผ่าน HTTPS หรือ Localhost บนมือถือ)
           </p>
-          <div className="flex gap-2 mt-1">
-            <button
-              onClick={() => setSettings((s) => ({ ...s, isSimulationMode: true }))}
-              className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-lg shadow"
-            >
-              Switch to Simulator Mode
-            </button>
-            <button
-              onClick={startCamera}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 flex items-center gap-1"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Retry Camera
-            </button>
-          </div>
+          <button
+            onClick={startCamera}
+            className="self-start px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 border border-slate-700"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            ลองใหม่อีกครั้ง
+          </button>
         </div>
       )}
 
-      {/* HUD Metrics & Status Overlays */}
-      <MetricsOverlay
-        fps={fps}
-        inferenceLatencyMs={inferenceLatencyMs}
-        motionStatus={motionStatus}
-        isCalibrated={isCalibrated}
-        isSimulationMode={settings.isSimulationMode}
-        speedLimitKmh={settings.speedLimitKmh}
-        statsMap={statsMap}
-        onOpenCalibration={() => setIsCalibModalOpen(true)}
-        onToggleSettings={() => setIsSettingsOpen(true)}
-        onOpenHistory={() => setIsHistoryOpen(true)}
-        historyCount={records.length}
-        onToggleSim={() => setSettings((s) => ({ ...s, isSimulationMode: !s.isSimulationMode }))}
-        audioEnabled={settings.soundEnabled}
-        onToggleAudio={() => setSettings((s) => ({ ...s, soundEnabled: !s.soundEnabled }))}
-        internalScale={internalScale}
-        onSpawnSpeedingCar={() => simulatorRef.current.spawnSpeedingVehicle()}
-        isFocusLocked={isFocusLocked}
-        onToggleFocusLock={handleToggleFocusLock}
-        isTripodMode={settings.tripodMode}
-        onToggleTripodMode={() => setSettings((s) => ({ ...s, tripodMode: !s.tripodMode }))}
-        focusSupportNote={focusSupportNote}
-      />
+      {/* Toast Notification */}
+      {toastNote && (
+        <div className="absolute top-16 z-40 self-center bg-slate-900/95 border border-sky-500/80 text-sky-200 px-4 py-2 rounded-xl text-xs shadow-2xl backdrop-blur-md animate-in fade-in zoom-in duration-150 flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+          <span>{toastNote}</span>
+        </div>
+      )}
 
-      {/* 4-Point Homography Calibration Modal */}
-      <CalibrationModal
-        isOpen={isCalibModalOpen}
-        onClose={() => setIsCalibModalOpen(false)}
-        onSave={(newCalib) => setCalibrationData(newCalib)}
-        initialCalibration={calibrationData}
-        canvasWidth={canvasRef.current?.width || 640}
-        canvasHeight={canvasRef.current?.height || 480}
-        previewImageSource={
-          settings.isSimulationMode ? simulatorRef.current.getCanvas() : videoRef.current
-        }
-      />
+      {/* ULTRA-CLEAN HUD CONTROLS OVERLAY */}
+      <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2.5 sm:p-3">
+        {/* Top Minimal Action Bar */}
+        <div className="pointer-events-auto flex items-center justify-between gap-2 bg-slate-950/90 backdrop-blur-md px-3 py-2 rounded-2xl border border-slate-800 shadow-2xl overflow-x-auto no-scrollbar w-full">
+          {/* Left: Motion Status & FPS */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/50 text-emerald-300 text-xs font-bold">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>ตรวจจับความเคลื่อนไหว (MOTION)</span>
+            </div>
 
-      {/* Settings & Tuning Drawer */}
-      <SettingsDrawer
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        onUpdateSettings={(newSettings) => setSettings((prev) => ({ ...prev, ...newSettings }))}
-        onOpenCalibration={() => setIsCalibModalOpen(true)}
-      />
+            <div className="hidden xs:flex items-center gap-1 text-[11px] font-mono text-slate-400 border-l border-slate-800 pl-2">
+              <Activity className="w-3 h-3 text-sky-400" />
+              <span className="font-bold text-white">{fps}</span>
+              <span>FPS</span>
+            </div>
+          </div>
+
+          {/* Right: Quick Controls */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* 1-Tap Distance Preset */}
+            <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
+              <span className="px-1.5 text-slate-400 text-[10px]">ระยะ:</span>
+              {[10, 15, 25, 40].map((d) => (
+                <button
+                  key={d}
+                  onClick={() => setDistanceMeters(d)}
+                  className={`px-2 py-0.5 rounded-lg font-bold transition ${
+                    distanceMeters === d
+                      ? 'bg-sky-500 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={`ตั้งระยะห่างจากกล้องถึงถนน ${d} เมตร`}
+                >
+                  {d}m
+                </button>
+              ))}
+            </div>
+
+            {/* Sensitivity */}
+            <div className="hidden sm:flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
+              <span className="px-1.5 text-slate-400 text-[10px]">ความไว:</span>
+              {(['low', 'medium', 'high'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSensitivity(s)}
+                  className={`px-2 py-0.5 rounded-lg font-bold transition ${
+                    sensitivity === s
+                      ? 'bg-amber-500 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                  title={`ปรับความไว: ${s}`}
+                >
+                  {s === 'low' ? 'ต่ำ' : s === 'medium' ? 'กลาง' : 'สูง'}
+                </button>
+              ))}
+            </div>
+
+            {/* Speed Limit Cycler */}
+            <button
+              onClick={() => {
+                const limits = [40, 60, 80, 100];
+                const next = limits[(limits.indexOf(speedLimitKmh) + 1) % limits.length];
+                setSpeedLimitKmh(next);
+                setToastNote(`🚨 ความเร็วเตือนเกินกำหนด: ${next} km/h`);
+                setTimeout(() => setToastNote(null), 2000);
+              }}
+              className="px-2 py-1 rounded-xl text-xs font-bold border border-rose-500/40 bg-rose-500/15 text-rose-300 transition hover:bg-rose-500/25"
+              title="แตะเพื่อเปลี่ยนระดับความเร็วเตือนเกินกำหนด"
+            >
+              🚨 {speedLimitKmh} km/h
+            </button>
+
+            {/* Focus Lock */}
+            <button
+              onClick={handleToggleFocusLock}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold border transition ${
+                isFocusLocked
+                  ? 'bg-emerald-500/25 border-emerald-500 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title={isFocusLocked ? 'โฟกัสคงที่แล้ว' : 'แตะเพื่อล็อกโฟกัส'}
+            >
+              {isFocusLocked ? (
+                <>
+                  <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">โฟกัสคงที่</span>
+                </>
+              ) : (
+                <>
+                  <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">ล็อกโฟกัส</span>
+                </>
+              )}
+            </button>
+
+            {/* History Drawer */}
+            <button
+              onClick={() => setIsHistoryOpen(true)}
+              className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-semibold rounded-xl border border-slate-700 transition"
+              title="เปิดดูภาพถ่ายและประวัติความเร็วที่แคปไว้"
+            >
+              <ClipboardList className="w-3.5 h-3.5 text-sky-400" />
+              <span>ประวัติ</span>
+              {records.length > 0 && (
+                <span className="px-1.5 py-0.2 bg-sky-500 text-white font-mono rounded-full text-[10px]">
+                  {records.length}
+                </span>
+              )}
+            </button>
+
+            {/* Audio Toggle */}
+            <button
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition"
+              title={soundEnabled ? 'ปิดเสียงเตือน' : 'เปิดเสียงเตือน'}
+            >
+              {soundEnabled ? (
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <VolumeX className="w-3.5 h-3.5 text-slate-500" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Bottom Live Feed Stats Bar */}
+        <div className="pointer-events-auto flex gap-2 overflow-x-auto pb-1 max-w-full no-scrollbar">
+          {activeBlobs.length === 0 ? (
+            <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 px-3.5 py-2 rounded-xl text-xs text-slate-300 flex items-center gap-2 shadow-xl">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <span>📡 เล็งกล้องไปที่ถนน (เมื่อมีรถหรือวัตถุขยับ ระบบจะล็อกและวัดความเร็วทันที)</span>
+            </div>
+          ) : (
+            activeBlobs.map((blob) => {
+              const isOver = blob.currentSpeedKmh > speedLimitKmh;
+              return (
+                <div
+                  key={blob.id}
+                  className={`shrink-0 flex items-center gap-3 px-3.5 py-2 rounded-xl border backdrop-blur-md transition shadow-2xl ${
+                    isOver
+                      ? 'border-rose-500 bg-rose-950/85 text-rose-200'
+                      : 'border-emerald-500 bg-emerald-950/85 text-emerald-200'
+                  }`}
+                >
+                  <div className="flex flex-col items-center">
+                    <Zap className="w-4 h-4 text-yellow-400" />
+                    <span className="text-[10px] font-mono text-slate-300">#{blob.id}</span>
+                  </div>
+
+                  <div className="flex flex-col">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-lg font-black font-mono">
+                        {blob.currentSpeedKmh > 0 ? blob.currentSpeedKmh : '...'}
+                      </span>
+                      <span className="text-[11px] font-sans font-medium">km/h</span>
+                    </div>
+                    <span className="text-[10px] text-slate-300">
+                      สูงสุด: {blob.peakSpeedKmh} km/h
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
 
       {/* Detection History Drawer */}
       <DetectionHistoryDrawer
@@ -757,10 +658,9 @@ export const CameraView: React.FC = () => {
         records={records}
         onClear={() => {
           setRecords([]);
-          loggedTracksRef.current.clear();
           localStorage.removeItem('speed_pwa_records');
         }}
-        speedLimitKmh={settings.speedLimitKmh}
+        speedLimitKmh={speedLimitKmh}
       />
     </div>
   );
