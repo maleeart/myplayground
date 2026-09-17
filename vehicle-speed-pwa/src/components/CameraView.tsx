@@ -83,6 +83,32 @@ export const CameraView: React.FC = () => {
     }
   });
   const loggedTracksRef = useRef<Set<number>>(new Set());
+  const realCalibrationRef = useRef<CalibrationData | null>(null);
+
+  // Switch calibration and reset tracker when toggling Simulation Mode
+  useEffect(() => {
+    if (settings.isSimulationMode) {
+      if (!realCalibrationRef.current) {
+        realCalibrationRef.current = { ...calibrationData };
+      }
+      const simCalib = simulatorRef.current.getSimCalibration();
+      setCalibrationData(simCalib);
+      homographyRef.current.compute(simCalib);
+      setIsCalibrated(true);
+      trackerRef.current = new ByteTracker({ highScoreThresh: 0.22, lowScoreThresh: 0.10, maxAge: 30 });
+      loggedTracksRef.current.clear();
+      setStatsMap(new Map());
+    } else {
+      if (realCalibrationRef.current) {
+        setCalibrationData(realCalibrationRef.current);
+        homographyRef.current.compute(realCalibrationRef.current);
+        realCalibrationRef.current = null;
+      }
+      trackerRef.current = new ByteTracker({ highScoreThresh: 0.22, lowScoreThresh: 0.10, maxAge: 30 });
+      loggedTracksRef.current.clear();
+      setStatsMap(new Map());
+    }
+  }, [settings.isSimulationMode]);
 
   // HUD stats
   const [fps, setFps] = useState(0);
@@ -286,8 +312,73 @@ export const CameraView: React.FC = () => {
       const motion = motionDetectorRef.current.evaluateFrame(source);
       setMotionStatus(motion);
 
-      // 4. Asynchronous Computer Vision Detection
-      if (!isDetectingRef.current && detectorRef.current.ready) {
+      // Helper function to update speed estimator, HUD stats, and auto-logging
+      const processTracksAndLog = (
+        activeTracks: ReturnType<typeof trackerRef.current.update>,
+        currentTimestamp: number,
+        frameSource: HTMLVideoElement | HTMLCanvasElement
+      ) => {
+        // Feed active tracks to Speed Estimator
+        const calculatedStats = speedEstimatorRef.current.update(activeTracks, currentTimestamp);
+        setStatsMap(calculatedStats);
+
+        // Auto-Log Vehicles with Peak Speeds
+        calculatedStats.forEach((stat, trackId) => {
+          if (stat.currentSpeedKmh > 5 && !loggedTracksRef.current.has(trackId)) {
+            loggedTracksRef.current.add(trackId);
+
+            // Snapshot thumbnail
+            const trk = trackerRef.current.getTrackById(trackId);
+            let snapUrl: string | undefined = undefined;
+            if (trk && frameSource) {
+              snapUrl = captureSnapshot(frameSource, trk.getBbox());
+            }
+
+            const now = new Date();
+            const timeStr = now.toTimeString().split(' ')[0];
+
+            const newRecord: DetectionRecord = {
+              id: `${trackId}-${Date.now()}`,
+              trackId,
+              vehicleClass: stat.vehicleClass,
+              timestamp: timeStr,
+              peakSpeedKmh: Math.round(stat.currentSpeedKmh),
+              avgSpeedKmh: Math.round(stat.averageSpeedKmh || stat.currentSpeedKmh),
+              distanceMeters: Math.round(stat.distanceTraveledMeters),
+              isOverLimit: stat.isOverLimit,
+              snapshotUrl: snapUrl,
+            };
+
+            setRecords((prev) => {
+              const updated = [newRecord, ...prev.slice(0, 49)];
+              try {
+                localStorage.setItem('speed_pwa_records', JSON.stringify(updated));
+              } catch {
+                // storage full
+              }
+              return updated;
+            });
+
+            // Audio Chime
+            if (stat.isOverLimit) {
+              audioAlert.playOverspeedAlarm();
+            } else {
+              audioAlert.playDetectBlip();
+            }
+          }
+        });
+      };
+
+      // 4. Vehicle Detection (Simulation Mode vs Real Camera AI)
+      if (settings.isSimulationMode) {
+        // Ground-truth detections from simulator with realistic micro-jitter
+        const simDetections = simulatorRef.current.getDetections();
+        setInferenceLatencyMs(12);
+        setInternalScale(1.0);
+
+        const activeTracks = trackerRef.current.update(simDetections, timestamp);
+        processTracksAndLog(activeTracks, timestamp, source);
+      } else if (!isDetectingRef.current && detectorRef.current.ready) {
         isDetectingRef.current = true;
         detectorRef.current
           .detect(source)
@@ -297,56 +388,7 @@ export const CameraView: React.FC = () => {
 
             // Feed detections to ByteTrack
             const activeTracks = trackerRef.current.update(detections, timestamp);
-
-            // Feed active tracks to Speed Estimator
-            const calculatedStats = speedEstimatorRef.current.update(activeTracks, timestamp);
-            setStatsMap(calculatedStats);
-
-            // Auto-Log Vehicles with Peak Speeds
-            calculatedStats.forEach((stat, trackId) => {
-              if (stat.currentSpeedKmh > 5 && !loggedTracksRef.current.has(trackId)) {
-                loggedTracksRef.current.add(trackId);
-
-                // Snapshot thumbnail
-                const trk = trackerRef.current.getTrackById(trackId);
-                let snapUrl: string | undefined = undefined;
-                if (trk && source) {
-                  snapUrl = captureSnapshot(source, trk.getBbox());
-                }
-
-                const now = new Date();
-                const timeStr = now.toTimeString().split(' ')[0];
-
-                const newRecord: DetectionRecord = {
-                  id: `${trackId}-${Date.now()}`,
-                  trackId,
-                  vehicleClass: stat.vehicleClass,
-                  timestamp: timeStr,
-                  peakSpeedKmh: stat.currentSpeedKmh,
-                  avgSpeedKmh: stat.averageSpeedKmh || stat.currentSpeedKmh,
-                  distanceMeters: stat.distanceTraveledMeters,
-                  isOverLimit: stat.isOverLimit,
-                  snapshotUrl: snapUrl,
-                };
-
-                setRecords((prev) => {
-                  const updated = [newRecord, ...prev.slice(0, 49)];
-                  try {
-                    localStorage.setItem('speed_pwa_records', JSON.stringify(updated));
-                  } catch {
-                    // storage full
-                  }
-                  return updated;
-                });
-
-                // Audio Chime
-                if (stat.isOverLimit) {
-                  audioAlert.playOverspeedAlarm();
-                } else {
-                  audioAlert.playDetectBlip();
-                }
-              }
-            });
+            processTracksAndLog(activeTracks, timestamp, source);
           })
           .catch((err) => {
             console.error('Detection error:', err);
@@ -568,6 +610,7 @@ export const CameraView: React.FC = () => {
         audioEnabled={settings.soundEnabled}
         onToggleAudio={() => setSettings((s) => ({ ...s, soundEnabled: !s.soundEnabled }))}
         internalScale={internalScale}
+        onSpawnSpeedingCar={() => simulatorRef.current.spawnSpeedingVehicle()}
       />
 
       {/* 4-Point Homography Calibration Modal */}

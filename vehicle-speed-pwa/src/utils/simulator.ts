@@ -6,7 +6,8 @@
  * to verify Homography calibration, Kalman filter tracking, and velocity math.
  */
 
-import type { Point2D } from '../core/homography';
+import type { Point2D, CalibrationData } from '../core/homography';
+import type { Detection } from '../core/tracker';
 
 export interface SimVehicle {
   id: number;
@@ -48,7 +49,7 @@ export class TrafficSimulator {
         lane: 0,
         distanceMeters: 2.0,
         targetSpeedKmh: 55,
-        color: '#3b82f6', // blue
+        color: '#2563eb', // royal blue
         widthMeters: 1.8,
         lengthMeters: 4.2,
       },
@@ -58,7 +59,7 @@ export class TrafficSimulator {
         lane: 1,
         distanceMeters: 12.0,
         targetSpeedKmh: 42,
-        color: '#f59e0b', // amber
+        color: '#d97706', // amber
         widthMeters: 2.4,
         lengthMeters: 8.0,
       },
@@ -68,11 +69,76 @@ export class TrafficSimulator {
         lane: 0,
         distanceMeters: 22.0,
         targetSpeedKmh: 68,
-        color: '#ec4899', // pink
+        color: '#db2777', // pink
         widthMeters: 0.9,
         lengthMeters: 2.1,
       },
     ];
+  }
+
+  /**
+   * Spawns an aggressive high-speed vehicle (e.g. 90-110 km/h) to test overspeed alerts
+   */
+  public spawnSpeedingVehicle(): void {
+    const lane = Math.random() > 0.5 ? 1 : 0;
+    this.vehicles.push({
+      id: this.nextVehicleId++,
+      class: 'car',
+      lane,
+      distanceMeters: 0,
+      targetSpeedKmh: 88 + Math.random() * 22, // 88 - 110 km/h
+      color: '#dc2626', // Speeding Red Sports Car
+      widthMeters: 1.8,
+      lengthMeters: 4.2,
+    });
+  }
+
+  /**
+   * Returns synthetic detections matching the moving vehicles for laboratory verification
+   */
+  public getDetections(): Detection[] {
+    const detections: Detection[] = [];
+    for (const v of this.vehicles) {
+      if (v.distanceMeters < 0.5 || v.distanceMeters > this.roadLengthMeters + 3.0) {
+        continue;
+      }
+      const laneCenterX = v.lane === 0 ? 1.75 : 5.25;
+      const pos = this.projectToPixel(laneCenterX, v.distanceMeters);
+
+      const scale = 0.35 + (v.distanceMeters / this.roadLengthMeters) * 0.9;
+      const pixelW = (v.class === 'motorcycle' ? 26 : v.class === 'truck' ? 62 : 44) * scale;
+      const pixelH = (v.class === 'motorcycle' ? 32 : v.class === 'truck' ? 70 : 50) * scale;
+
+      const left = pos.x - pixelW / 2;
+      const top = pos.y - pixelH;
+
+      // Realistic microscopic jitter for Kalman filtering
+      const jitterX = (Math.random() - 0.5) * 0.8;
+      const jitterY = (Math.random() - 0.5) * 0.8;
+
+      detections.push({
+        bbox: {
+          x: Math.round(left + jitterX),
+          y: Math.round(top + jitterY),
+          w: Math.round(pixelW),
+          h: Math.round(pixelH),
+        },
+        class: v.class,
+        score: Math.min(0.98, 0.90 + Math.random() * 0.08),
+      });
+    }
+    return detections;
+  }
+
+  /**
+   * Returns exact CalibrationData corresponding to this simulated road
+   */
+  public getSimCalibration(): CalibrationData {
+    return {
+      imagePoints: this.getDefaultCalibrationPoints(),
+      roadWidthMeters: this.roadWidthMeters,
+      roadLengthMeters: this.roadLengthMeters,
+    };
   }
 
   /**
@@ -186,6 +252,19 @@ export class TrafficSimulator {
     ctx.stroke();
     ctx.setLineDash([]);
 
+    // Simulator Mode Top Watermark Banner
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+    ctx.beginPath();
+    ctx.roundRect(12, 12, 340, 28, [8]);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('🎮 VIRTUAL TRAFFIC SIMULATOR (SIM)', 24, 30);
+
     // Draw vehicles sorted by distance (back to front)
     const sorted = [...this.vehicles].sort((a, b) => a.distanceMeters - b.distanceMeters);
 
@@ -207,35 +286,81 @@ export class TrafficSimulator {
     const left = pos.x - pixelW / 2;
     const top = pos.y - pixelH;
 
-    // Vehicle shadow
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    // Headlight cones shining forward onto asphalt
+    ctx.save();
+    const lightGrad = ctx.createRadialGradient(
+      pos.x, pos.y, 4 * scale,
+      pos.x, pos.y + 35 * scale, 45 * scale
+    );
+    lightGrad.addColorStop(0, 'rgba(254, 240, 138, 0.3)');
+    lightGrad.addColorStop(1, 'rgba(254, 240, 138, 0)');
+    ctx.fillStyle = lightGrad;
     ctx.beginPath();
-    ctx.ellipse(pos.x, pos.y, pixelW * 0.55, pixelH * 0.15, 0, 0, Math.PI * 2);
+    ctx.moveTo(left + 2, top + pixelH);
+    ctx.lineTo(left - 12 * scale, top + pixelH + 40 * scale);
+    ctx.lineTo(left + pixelW + 12 * scale, top + pixelH + 40 * scale);
+    ctx.lineTo(left + pixelW - 2, top + pixelH);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Vehicle ground shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.beginPath();
+    ctx.ellipse(pos.x, pos.y, pixelW * 0.55, pixelH * 0.16, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Vehicle body
-    ctx.fillStyle = v.color;
+    // Tires (left and right)
+    const tireW = Math.max(3, 5 * scale);
+    const tireH = Math.max(6, 12 * scale);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(left - tireW / 2, top + pixelH - tireH - 2 * scale, tireW, tireH);
+    ctx.fillRect(left + pixelW - tireW / 2, top + pixelH - tireH - 2 * scale, tireW, tireH);
+    ctx.fillRect(left - tireW / 2, top + 4 * scale, tireW, tireH);
+    ctx.fillRect(left + pixelW - tireW / 2, top + 4 * scale, tireW, tireH);
+
+    // Vehicle body with gradient
+    const bodyGrad = ctx.createLinearGradient(left, top, left + pixelW, top + pixelH);
+    bodyGrad.addColorStop(0, v.color);
+    bodyGrad.addColorStop(1, '#0f172a');
+    ctx.fillStyle = bodyGrad;
     ctx.beginPath();
-    ctx.roundRect(left, top, pixelW, pixelH, [6 * scale, 6 * scale, 2, 2]);
+    ctx.roundRect(left, top, pixelW, pixelH, [8 * scale, 8 * scale, 4 * scale, 4 * scale]);
     ctx.fill();
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Windshield
+    // Windshield (facing forward/downward)
     ctx.fillStyle = '#0f172a';
-    ctx.fillRect(left + 4 * scale, top + 6 * scale, pixelW - 8 * scale, pixelH * 0.28);
+    ctx.beginPath();
+    ctx.roundRect(left + 4 * scale, top + pixelH * 0.45, pixelW - 8 * scale, pixelH * 0.28, [3 * scale]);
+    ctx.fill();
 
-    // Taillights
-    ctx.fillStyle = '#ef4444';
-    ctx.fillRect(left + 2, top + pixelH - 4 * scale, 6 * scale, 3 * scale);
-    ctx.fillRect(left + pixelW - 8 * scale, top + pixelH - 4 * scale, 6 * scale, 3 * scale);
+    // Glass glare reflection
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(left + 6 * scale, top + pixelH * 0.5);
+    ctx.lineTo(left + pixelW - 10 * scale, top + pixelH * 0.65);
+    ctx.stroke();
 
-    // Ground Truth Speed Tag (for validation)
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(left, top - 18, pixelW + 20, 16);
+    // Headlights (bright yellow/white on front bumper)
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(left + 3 * scale, top + pixelH - 4 * scale, 6 * scale, 3 * scale);
+    ctx.fillRect(left + pixelW - 9 * scale, top + pixelH - 4 * scale, 6 * scale, 3 * scale);
+
+    // Front grille
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(left + pixelW * 0.28, top + pixelH - 3 * scale, pixelW * 0.44, 2 * scale);
+
+    // Ground Truth Speed Tag (for validation and calibration check)
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.fillRect(left - 4, top - 18 * scale, pixelW + 8, 15 * scale);
     ctx.fillStyle = '#38bdf8';
-    ctx.font = 'bold 10px monospace';
-    ctx.fillText(`GT: ${Math.round(v.targetSpeedKmh)} km/h`, left + 2, top - 6);
+    ctx.font = `bold ${Math.max(9, Math.round(10 * scale))}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`GT: ${Math.round(v.targetSpeedKmh)} km/h`, left + pixelW / 2, top - 7 * scale);
+    ctx.textAlign = 'left';
   }
 }

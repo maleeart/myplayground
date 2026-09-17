@@ -40,6 +40,7 @@ interface MetricsOverlayProps {
   audioEnabled: boolean;
   onToggleAudio: () => void;
   internalScale: number;
+  onSpawnSpeedingCar?: () => void;
 }
 
 export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
@@ -58,6 +59,7 @@ export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
   audioEnabled,
   onToggleAudio,
   internalScale,
+  onSpawnSpeedingCar,
 }) => {
   // Display all active tracks (even if just locked onto)
   const activeStats = Array.from(statsMap.values());
@@ -178,6 +180,31 @@ export const MetricsOverlay: React.FC<MetricsOverlayProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Simulator Mode Active Banner */}
+      {isSimulationMode && (
+        <div className="pointer-events-auto self-center mt-2 flex flex-wrap items-center justify-between gap-2 bg-indigo-950/90 border border-indigo-500/60 text-indigo-100 px-3 py-1.5 rounded-xl text-xs shadow-2xl backdrop-blur-md max-w-lg w-full">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </span>
+            <span className="text-[11px] sm:text-xs">
+              🛣️ <b>โหมดจำลองรถ:</b> ทดสอบ AI วัดความเร็ว + ถ่ายภาพประวัติ
+            </span>
+          </div>
+          {onSpawnSpeedingCar && (
+            <button
+              onClick={onSpawnSpeedingCar}
+              className="ml-auto px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold rounded-lg shadow transition flex items-center gap-1 active:scale-95"
+              title="ปล่อยรถสปอร์ตสีแดงวิ่งเกิน 90 km/h เพื่อทดสอบระบบเตือนความเร็วเกิน"
+            >
+              <Zap className="w-3 h-3 fill-current text-yellow-300" />
+              <span>ปล่อยรถซิ่ง (95 km/h)</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Camera Shake Warning Toast */}
       {motionStatus.isShaking && (
