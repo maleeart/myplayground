@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { X, Trash2, Download, Car, Truck, Zap, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { X, Trash2, Download, Car, Truck, Zap, AlertTriangle, ShieldCheck, User } from 'lucide-react';
 
 export interface DetectionRecord {
   id: string;
@@ -50,7 +50,7 @@ export const DetectionHistoryDrawer: React.FC<DetectionHistoryDrawerProps> = ({
 
   const exportCSV = () => {
     if (records.length === 0) return;
-    const headers = ['ID', 'Vehicle Class', 'Time', 'Peak Speed (km/h)', 'Avg Speed (km/h)', 'Distance (m)', 'Overspeed'];
+    const headers = ['ID', 'Target Type', 'Time', 'Peak Speed (km/h)', 'Avg Speed (km/h)', 'Distance (m)', 'Overspeed'];
     const rows = records.map((r) => [
       r.trackId,
       r.vehicleClass,
@@ -67,22 +67,24 @@ export const DetectionHistoryDrawer: React.FC<DetectionHistoryDrawerProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `traffic_speed_log_${Date.now()}.csv`);
+    link.setAttribute('download', `speed_detection_log_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   const getIcon = (vClass: string) => {
-    switch (vClass.toLowerCase()) {
-      case 'truck':
-      case 'bus':
-        return <Truck className="w-4 h-4 text-amber-400" />;
-      case 'motorcycle':
-        return <Zap className="w-4 h-4 text-rose-400" />;
-      default:
-        return <Car className="w-4 h-4 text-sky-400" />;
+    const lower = vClass.toLowerCase();
+    if (lower.includes('คน') || lower === 'person') {
+      return <User className="w-4 h-4 text-emerald-400" />;
     }
+    if (lower.includes('truck') || lower.includes('bus') || lower.includes('บรรทุก') || lower.includes('บัส')) {
+      return <Truck className="w-4 h-4 text-amber-400" />;
+    }
+    if (lower.includes('motorcycle') || lower.includes('มอเตอร์ไซค์')) {
+      return <Zap className="w-4 h-4 text-rose-400" />;
+    }
+    return <Car className="w-4 h-4 text-sky-400" />;
   };
 
   return (

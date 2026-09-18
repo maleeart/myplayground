@@ -1,13 +1,20 @@
 /**
- * High-Speed Optical Motion Detector & Blob Tracker
+ * High-Speed Optical Motion Detector & Target Tracker
  * 
- * Implements pure Frame-to-Frame Differencing & Background Subtraction:
- * 1. Compares current frame with previous frame (|Frame_t - Frame_{t-1}|)
- * 2. Identifies any moving pixels above threshold
- * 3. Clusters motion pixels into bounding boxes (Blobs)
- * 4. Tracks moving blobs across frames to compute real-time velocity (km/h)
- * 5. Auto-triggers snapshot capture for speed records
+ * Specifically filters and detects:
+ * - People (คน): 'person' (🏃)
+ * - Vehicles (รถ): 'car', 'motorcycle', 'bus', 'truck', 'bicycle' (🚗, 🏍️, 🚌, 🚚, 🚲)
+ * 
+ * Features:
+ * - Anti-Noise Filter: Rejects wind, leaves, shadows, camera micro-tremors, and background jitter.
+ * - Semantic AI Matching: Fuses real-time COCO-SSD detections with 60 FPS motion trajectories.
+ * - Shape & Aspect Ratio Profiling: Vertical proportions (H > W) for pedestrians; horizontal/box (W >= 0.7H) for vehicles.
+ * - Optical Field-of-View metric speed estimation in km/h.
+ * - Auto-snapshot logging with Thai classification labels.
  */
+
+import type { Detection } from './tracker';
+import { getClassInfo, type TargetFilterMode } from './detector';
 
 export interface MotionBlob {
   id: number;
@@ -23,13 +30,21 @@ export interface MotionBlob {
   lastSeen: number;
   hits: number;
   hasBeenLogged: boolean;
+  class: string;
+  label: string;
+  icon: string;
+  category: 'person' | 'vehicle';
+  score: number;
+  isStationary: boolean;
+  isAiConfirmed: boolean;
 }
 
 export interface MotionTrackerConfig {
   sensitivity: 'low' | 'medium' | 'high';
-  distanceMeters: number; // Distance from camera to moving object (default 15m)
-  angleDegrees: number; // Angle relative to camera line of sight (default 90 deg = crossing)
-  minAreaPx: number; // Minimum blob area to reject tiny noise (leaves, bugs)
+  distanceMeters: number; // Distance from camera to road/target (default 15m)
+  angleDegrees: number; // Angle relative to camera line of sight (default 90 deg)
+  minAreaPx: number; // Minimum blob area (rejects tiny noise)
+  filterMode: TargetFilterMode; // 'all' | 'vehicles' | 'people'
 }
 
 export class MotionTracker {
@@ -57,10 +72,11 @@ export class MotionTracker {
   private maskImageData: ImageData;
 
   // Sensitivity thresholds (difference in luminance 0-255)
+  // Cleaned up to reject camera noise and leaves
   private thresholdMap = {
-    high: 7,
-    medium: 12,
-    low: 20,
+    high: 10,
+    medium: 16,
+    low: 26,
   };
 
   constructor(config?: Partial<MotionTrackerConfig>) {
@@ -68,7 +84,8 @@ export class MotionTracker {
       sensitivity: 'medium',
       distanceMeters: 15.0,
       angleDegrees: 90,
-      minAreaPx: 120, // Sensitive enough to detect hand waving or distant cars
+      minAreaPx: 650, // Rejects leaves, bugs, micro-shake; accepts humans & vehicles
+      filterMode: 'all',
       ...config,
     };
 
@@ -101,11 +118,13 @@ export class MotionTracker {
   }
 
   /**
-   * Process a video frame: calculates frame difference, finds moving blobs, updates speeds
+   * Process a video frame: combines frame differencing with AI detections
+   * Specifically filters for People and Vehicles.
    */
   public processFrame(
     videoOrCanvas: HTMLVideoElement | HTMLCanvasElement,
-    timestamp: number
+    timestamp: number,
+    aiDetections: Detection[] = []
   ): {
     blobs: MotionBlob[];
     newlyDetectedForLogging: MotionBlob[];
@@ -116,7 +135,7 @@ export class MotionTracker {
       return { blobs: [], newlyDetectedForLogging: [] };
     }
 
-    // 1. Downsample to sample canvas for ultra-fast (sub-millisecond) pixel processing
+    // 1. Downsample for ultra-fast (sub-millisecond) motion difference computation
     this.sampleCtx.drawImage(videoOrCanvas, 0, 0, this.width, this.height);
     const imgData = this.sampleCtx.getImageData(0, 0, this.width, this.height);
     const data = imgData.data;
@@ -125,7 +144,6 @@ export class MotionTracker {
     // Convert to grayscale
     const currentGray = new Uint8Array(pixelCount);
     for (let i = 0, j = 0; i < pixelCount; i++, j += 4) {
-      // Fast integer luminance approximation
       currentGray[i] = (data[j] * 77 + data[j + 1] * 150 + data[j + 2] * 29) >> 8;
     }
 
@@ -139,13 +157,10 @@ export class MotionTracker {
       return { blobs: [], newlyDetectedForLogging: [] };
     }
 
-    // 2. Dual Motion Differencing:
-    // Combines frame-to-frame diff (|t - (t-1)|) and running background diff (|t - bg|)
+    // 2. Dual Motion Differencing (|Frame_t - Frame_{t-1}| & |Frame_t - Background|)
     const diffThreshold = this.thresholdMap[this.config.sensitivity];
     const gridMotionCount = new Uint16Array(this.gridCols * this.gridRows);
-
-    // Adaptive background learning rate: 0.04 (adapts to clouds/lighting but moving cars stand out)
-    const bgRate = 0.04;
+    const bgRate = 0.035;
 
     const maskData = this.showMotionMask ? this.maskImageData.data : null;
     if (maskData) {
@@ -163,24 +178,21 @@ export class MotionTracker {
         const prev = this.prevFrameData[idx];
         const bg = this.backgroundData[idx];
 
-        // Motion difference
         const frameDiff = Math.abs(cur - prev);
         const bgDiff = Math.abs(cur - bg);
 
-        // Update background model
         this.backgroundData[idx] = bg * (1 - bgRate) + cur * bgRate;
 
-        // A pixel is moving if it shifted from previous frame or from stationary background
-        if (frameDiff > diffThreshold || bgDiff > diffThreshold + 8) {
+        if (frameDiff > diffThreshold || bgDiff > diffThreshold + 10) {
           const gridX = Math.floor(x / this.cellW);
           gridMotionCount[gridRowOffset + gridX]++;
 
           if (maskData) {
             const pIdx = idx * 4;
-            maskData[pIdx] = 16;      // R
-            maskData[pIdx + 1] = 240;  // G: Fluorescent green
-            maskData[pIdx + 2] = 180;  // B: Fluorescent cyan
-            maskData[pIdx + 3] = 210;  // Alpha
+            maskData[pIdx] = 16;
+            maskData[pIdx + 1] = 240;
+            maskData[pIdx + 2] = 180;
+            maskData[pIdx + 3] = 210;
           }
         }
       }
@@ -190,12 +202,11 @@ export class MotionTracker {
       this.maskCtx.putImageData(this.maskImageData, 0, 0);
     }
 
-    // Store previous frame
     this.prevFrameData = currentGray;
 
-    // 3. Grid-Based Clustering (Connected Components on 30x22 grid)
-    // A grid cell is active if >= 3 pixels inside it moved
-    const minCellActivePixels = 3;
+    // 3. Grid Clustering & Morphological Component Filtering
+    // Requires >= 4 pixels moved inside a cell (filters out minor leaves/sensor grain)
+    const minCellActivePixels = 4;
     const activeGrid = new Uint8Array(this.gridCols * this.gridRows);
     for (let i = 0; i < activeGrid.length; i++) {
       if (gridMotionCount[i] >= minCellActivePixels) {
@@ -203,7 +214,6 @@ export class MotionTracker {
       }
     }
 
-    // Connected Component Labeling via Breadth-First Search
     const visited = new Uint8Array(this.gridCols * this.gridRows);
     const rawBoxes: Array<{ minX: number; minY: number; maxX: number; maxY: number; cells: number }> = [];
 
@@ -211,7 +221,6 @@ export class MotionTracker {
       for (let gx = 0; gx < this.gridCols; gx++) {
         const gIdx = gy * this.gridCols + gx;
         if (activeGrid[gIdx] === 1 && visited[gIdx] === 0) {
-          // New moving blob component found: BFS flood fill
           let minGX = gx;
           let maxGX = gx;
           let minGY = gy;
@@ -232,7 +241,6 @@ export class MotionTracker {
             if (cy < minGY) minGY = cy;
             if (cy > maxGY) maxGY = cy;
 
-            // 4-neighborhood
             const neighbors = [
               cy > 0 ? (cy - 1) * this.gridCols + cx : -1,
               cy < this.gridRows - 1 ? (cy + 1) * this.gridCols + cx : -1,
@@ -248,8 +256,8 @@ export class MotionTracker {
             }
           }
 
-          // Filter out tiny noise and reject massive screen shifts (e.g. camera panning > 75% of grid)
-          if (cellCount >= 1 && cellCount < this.gridCols * this.gridRows * 0.75) {
+          // Anti-Noise: Require at least 2 connected grid cells and < 70% of screen
+          if (cellCount >= 2 && cellCount < this.gridCols * this.gridRows * 0.70) {
             rawBoxes.push({
               minX: minGX * this.cellW,
               minY: minGY * this.cellH,
@@ -262,47 +270,117 @@ export class MotionTracker {
       }
     }
 
-    // Merge overlapping or adjacent boxes
     const mergedBoxes = this.mergeBoxes(rawBoxes);
-
-    // 4. Scale bounding boxes back to full video/canvas resolution
     const scaleX = srcW / this.width;
     const scaleY = srcH / this.height;
 
-    const detectedCandidates = mergedBoxes
-      .map((b) => {
-        const x = Math.round(b.minX * scaleX);
-        const y = Math.round(b.minY * scaleY);
-        const w = Math.round((b.maxX - b.minX) * scaleX);
-        const h = Math.round((b.maxY - b.minY) * scaleY);
-        return {
-          bbox: { x, y, w, h },
-          centroid: { x: x + w / 2, y: y + h / 2 },
-          area: w * h,
-        };
-      })
-      .filter((b) => b.area >= this.config.minAreaPx);
+    // 4. Candidates from Motion with Strict Shape & Aspect Ratio Classification
+    interface Candidate {
+      bbox: { x: number; y: number; w: number; h: number };
+      centroid: { x: number; y: number };
+      class: string;
+      label: string;
+      icon: string;
+      category: 'person' | 'vehicle';
+      score: number;
+      isAi: boolean;
+    }
 
-    // 5. Track Association & Speed Estimation
-    // Camera Optical FOV model for speed conversion:
-    // Horizontal Field of view ≈ 65 degrees. Visible road width W ≈ 2 * D * tan(32.5 deg) ≈ 1.28 * D
+    const candidates: Candidate[] = [];
+
+    // First: Prioritize Confirmed AI Detections
+    for (const ai of aiDetections) {
+      const info = getClassInfo(ai.class);
+      // Filter by active target mode
+      if (this.config.filterMode === 'vehicles' && info.category !== 'vehicle') continue;
+      if (this.config.filterMode === 'people' && info.category !== 'person') continue;
+
+      candidates.push({
+        bbox: ai.bbox,
+        centroid: { x: ai.bbox.x + ai.bbox.w / 2, y: ai.bbox.y + ai.bbox.h / 2 },
+        class: ai.class,
+        label: info.thaiName,
+        icon: info.icon,
+        category: info.category,
+        score: ai.score,
+        isAi: true,
+      });
+    }
+
+    // Second: Fallback to Morphological Shape Analysis if no AI boxes overlapping
+    for (const b of mergedBoxes) {
+      const x = Math.round(b.minX * scaleX);
+      const y = Math.round(b.minY * scaleY);
+      const w = Math.round((b.maxX - b.minX) * scaleX);
+      const h = Math.round((b.maxY - b.minY) * scaleY);
+      const area = w * h;
+
+      if (area < this.config.minAreaPx) continue;
+
+      // Check if already covered by an AI detection
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const alreadyCoveredByAi = candidates.some(
+        (c) => c.isAi && Math.hypot(c.centroid.x - cx, c.centroid.y - cy) < Math.max(c.bbox.w, c.bbox.h) * 0.8
+      );
+      if (alreadyCoveredByAi) continue;
+
+      const aspectRatio = w / Math.max(1, h);
+
+      // Person: Vertical posture (Height > Width)
+      const isPersonShape = aspectRatio <= 0.85 && h >= 36 && area >= 550;
+
+      // Vehicle: Horizontal or balanced box (Width >= 0.65 Height)
+      const isVehicleShape = aspectRatio >= 0.65 && w >= 38 && area >= 850;
+
+      // REJECT any shape that is neither person nor vehicle (e.g. swaying leaves, random dust)
+      if (!isPersonShape && !isVehicleShape) {
+        continue;
+      }
+
+      if (isPersonShape) {
+        if (this.config.filterMode === 'vehicles') continue; // filtered out
+        candidates.push({
+          bbox: { x, y, w, h },
+          centroid: { x: cx, y: cy },
+          class: 'person',
+          label: 'คน',
+          icon: '🏃',
+          category: 'person',
+          score: 0.75,
+          isAi: false,
+        });
+      } else if (isVehicleShape) {
+        if (this.config.filterMode === 'people') continue; // filtered out
+        candidates.push({
+          bbox: { x, y, w, h },
+          centroid: { x: cx, y: cy },
+          class: 'car',
+          label: 'รถยนต์',
+          icon: '🚗',
+          category: 'vehicle',
+          score: 0.75,
+          isAi: false,
+        });
+      }
+    }
+
+    // 5. Association & Speed Computation
     const visibleWidthMeters = 1.28 * Math.max(1, this.config.distanceMeters);
     const pixelsPerMeter = srcW / visibleWidthMeters;
-    // Angular correction for oblique movement: (speed = rawSpeed / sin(angle))
     const angleRad = (Math.max(15, Math.min(90, this.config.angleDegrees)) * Math.PI) / 180;
     const angleCorrectionFactor = 1.0 / Math.sin(angleRad);
 
     const newlyDetectedForLogging: MotionBlob[] = [];
     const matchedTrackIds = new Set<number>();
 
-    for (const det of detectedCandidates) {
-      // Find closest active blob by centroid distance
+    for (const cand of candidates) {
       let bestBlob: MotionBlob | null = null;
-      let minDistance = 140 * (srcW / 640); // match threshold
+      let minDistance = 150 * (srcW / 640);
 
       for (const [id, blob] of this.activeBlobs.entries()) {
         if (matchedTrackIds.has(id)) continue;
-        const d = Math.hypot(det.centroid.x - blob.centroid.x, det.centroid.y - blob.centroid.y);
+        const d = Math.hypot(cand.centroid.x - blob.centroid.x, cand.centroid.y - blob.centroid.y);
         if (d < minDistance) {
           minDistance = d;
           bestBlob = blob;
@@ -310,75 +388,90 @@ export class MotionTracker {
       }
 
       if (bestBlob) {
-        // Update existing track
         matchedTrackIds.add(bestBlob.id);
-        bestBlob.bbox = det.bbox;
-        bestBlob.centroid = det.centroid;
+        bestBlob.bbox = cand.bbox;
+        bestBlob.centroid = cand.centroid;
         bestBlob.lastSeen = timestamp;
         bestBlob.hits++;
 
-        // Add to trajectory
-        bestBlob.history.push({ x: det.centroid.x, y: det.centroid.y, time: timestamp });
+        // Update class/category if AI confirms
+        if (cand.isAi || !bestBlob.isAiConfirmed) {
+          bestBlob.class = cand.class;
+          bestBlob.label = cand.label;
+          bestBlob.icon = cand.icon;
+          bestBlob.category = cand.category;
+          bestBlob.score = cand.score;
+          if (cand.isAi) bestBlob.isAiConfirmed = true;
+        }
+
+        bestBlob.history.push({ x: cand.centroid.x, y: cand.centroid.y, time: timestamp });
         if (bestBlob.history.length > 30) {
           bestBlob.history.shift();
         }
 
-        // Calculate speed over last ~0.2 - 0.5s window
+        // Speed Calculation
         if (bestBlob.history.length >= 3) {
-          const k = Math.min(8, bestBlob.history.length - 1);
+          const k = Math.min(7, bestBlob.history.length - 1);
           const past = bestBlob.history[bestBlob.history.length - 1 - k];
           const curr = bestBlob.history[bestBlob.history.length - 1];
 
           const dt = (curr.time - past.time) / 1000;
-          if (dt > 0.06) {
+          if (dt > 0.05) {
             const dx = curr.x - past.x;
             const dy = curr.y - past.y;
             const dPixels = Math.hypot(dx, dy);
 
-            // Metric velocity: meters / seconds * 3.6 = km/h
-            const dMeters = dPixels / pixelsPerMeter;
-            const rawSpeedKmh = (dMeters / dt) * 3.6 * angleCorrectionFactor;
+            // Check if stationary (e.g. jiggling in place < 3 pixels)
+            if (dPixels < 3.5) {
+              bestBlob.isStationary = true;
+              bestBlob.currentSpeedKmh = 0;
+            } else {
+              bestBlob.isStationary = false;
+              const dMeters = dPixels / pixelsPerMeter;
+              const rawSpeedKmh = (dMeters / dt) * 3.6 * angleCorrectionFactor;
 
-            // Physical vehicle acceleration clamp (< 15 m/s^2)
-            const maxDelta = 15 * 3.6 * dt;
-            let clampedSpeed = rawSpeedKmh;
-            if (bestBlob.currentSpeedKmh > 0 && Math.abs(rawSpeedKmh - bestBlob.currentSpeedKmh) > maxDelta) {
-              clampedSpeed = rawSpeedKmh > bestBlob.currentSpeedKmh
-                ? bestBlob.currentSpeedKmh + maxDelta
-                : Math.max(0, bestBlob.currentSpeedKmh - maxDelta);
-            }
+              // Physical acceleration clamp (< 16 m/s^2)
+              const maxDelta = 16 * 3.6 * dt;
+              let clampedSpeed = rawSpeedKmh;
+              if (bestBlob.currentSpeedKmh > 0 && Math.abs(rawSpeedKmh - bestBlob.currentSpeedKmh) > maxDelta) {
+                clampedSpeed = rawSpeedKmh > bestBlob.currentSpeedKmh
+                  ? bestBlob.currentSpeedKmh + maxDelta
+                  : Math.max(0, bestBlob.currentSpeedKmh - maxDelta);
+              }
 
-            // Exponential Moving Average filter
-            bestBlob.currentSpeedKmh = Math.round(
-              bestBlob.currentSpeedKmh === 0
-                ? clampedSpeed
-                : 0.35 * clampedSpeed + 0.65 * bestBlob.currentSpeedKmh
-            );
+              // Smooth speed with EMA
+              bestBlob.currentSpeedKmh = Math.round(
+                bestBlob.currentSpeedKmh === 0
+                  ? clampedSpeed
+                  : 0.35 * clampedSpeed + 0.65 * bestBlob.currentSpeedKmh
+              );
 
-            if (bestBlob.currentSpeedKmh > bestBlob.peakSpeedKmh) {
-              bestBlob.peakSpeedKmh = bestBlob.currentSpeedKmh;
-            }
+              if (bestBlob.currentSpeedKmh > bestBlob.peakSpeedKmh) {
+                bestBlob.peakSpeedKmh = bestBlob.currentSpeedKmh;
+              }
 
-            bestBlob.speedSamples.push(bestBlob.currentSpeedKmh);
-            const sum = bestBlob.speedSamples.reduce((a, b) => a + b, 0);
-            bestBlob.avgSpeedKmh = Math.round(sum / bestBlob.speedSamples.length);
-            bestBlob.distanceTraveledPx += dPixels;
+              bestBlob.speedSamples.push(bestBlob.currentSpeedKmh);
+              const sum = bestBlob.speedSamples.reduce((a, b) => a + b, 0);
+              bestBlob.avgSpeedKmh = Math.round(sum / bestBlob.speedSamples.length);
+              bestBlob.distanceTraveledPx += dPixels;
 
-            // Trigger logging once object has sustained reliable movement (> 2 km/h & 4 hits)
-            if (!bestBlob.hasBeenLogged && bestBlob.hits >= 4 && bestBlob.currentSpeedKmh > 2) {
-              bestBlob.hasBeenLogged = true;
-              newlyDetectedForLogging.push(bestBlob);
+              // Auto-log verified moving person or vehicle
+              const minSpeedToLog = bestBlob.category === 'person' ? 2 : 5;
+              if (!bestBlob.hasBeenLogged && bestBlob.hits >= 4 && bestBlob.currentSpeedKmh >= minSpeedToLog) {
+                bestBlob.hasBeenLogged = true;
+                newlyDetectedForLogging.push(bestBlob);
+              }
             }
           }
         }
       } else {
-        // Create new motion blob track
+        // Create new confirmed person / vehicle track
         const newId = this.nextTrackId++;
         const newBlob: MotionBlob = {
           id: newId,
-          bbox: det.bbox,
-          centroid: det.centroid,
-          history: [{ x: det.centroid.x, y: det.centroid.y, time: timestamp }],
+          bbox: cand.bbox,
+          centroid: cand.centroid,
+          history: [{ x: cand.centroid.x, y: cand.centroid.y, time: timestamp }],
           currentSpeedKmh: 0,
           peakSpeedKmh: 0,
           avgSpeedKmh: 0,
@@ -388,6 +481,13 @@ export class MotionTracker {
           lastSeen: timestamp,
           hits: 1,
           hasBeenLogged: false,
+          class: cand.class,
+          label: cand.label,
+          icon: cand.icon,
+          category: cand.category,
+          score: cand.score,
+          isStationary: true,
+          isAiConfirmed: cand.isAi,
         };
 
         this.activeBlobs.set(newId, newBlob);
@@ -395,7 +495,7 @@ export class MotionTracker {
       }
     }
 
-    // Remove expired tracks (not seen for > 450ms)
+    // Expire tracks not seen for > 450ms
     for (const [id, blob] of this.activeBlobs.entries()) {
       if (timestamp - blob.lastSeen > 450) {
         this.activeBlobs.delete(id);
@@ -418,7 +518,7 @@ export class MotionTracker {
 
     const merged: typeof boxes = [];
     const used = new Uint8Array(boxes.length);
-    const padding = 6; // merge tolerance in sample pixels
+    const padding = 6;
 
     for (let i = 0; i < boxes.length; i++) {
       if (used[i]) continue;
@@ -432,7 +532,6 @@ export class MotionTracker {
           if (used[j]) continue;
           const b2 = boxes[j];
 
-          // Check if boxes overlap or are within padding
           const overlapX = !(b1.maxX + padding < b2.minX || b2.maxX + padding < b1.minX);
           const overlapY = !(b1.maxY + padding < b2.minY || b2.maxY + padding < b1.minY);
 
