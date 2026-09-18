@@ -1,16 +1,16 @@
 /**
  * High-Speed Optical Motion Detector & Target Tracker
  * 
- * Specifically filters and detects:
- * - People (คน): 'person' (🏃)
- * - Vehicles (รถ): 'car', 'motorcycle', 'bus', 'truck', 'bicycle' (🚗, 🏍️, 🚌, 🚚, 🚲)
- * 
- * Features:
- * - Anti-Noise Filter: Rejects wind, leaves, shadows, camera micro-tremors, and background jitter.
- * - Semantic AI Matching: Fuses real-time COCO-SSD detections with 60 FPS motion trajectories.
- * - Shape & Aspect Ratio Profiling: Vertical proportions (H > W) for pedestrians; horizontal/box (W >= 0.7H) for vehicles.
+ * Specifically designed for Handheld Mobile Cameras:
+ * - Anti-Tremor & Handheld Shake Rejection:
+ *     1) Rejects hand shake oscillations via Net Translational Displacement tracking.
+ *     2) Rejects global camera movements (frame-wide panning/tilting).
+ *     3) Strict AI-only candidate mode (NEVER creates ghost targets from raw pixel motion when handheld).
+ * - Filters and tracks ONLY:
+ *     - People (คน): 'person' (🏃)
+ *     - Vehicles (รถ): 'car', 'motorcycle', 'bus', 'truck', 'bicycle' (🚗, 🏍️, 🚌, 🚚, 🚲)
+ * - Strict Auto-Snapshot: Only captures confirmed targets with sustained real motion (no jitter snaps).
  * - Optical Field-of-View metric speed estimation in km/h.
- * - Auto-snapshot logging with Thai classification labels.
  */
 
 import type { Detection } from './tracker';
@@ -20,6 +20,8 @@ export interface MotionBlob {
   id: number;
   bbox: { x: number; y: number; w: number; h: number };
   centroid: { x: number; y: number };
+  anchorCentroid: { x: number; y: number };
+  netDisplacementPx: number;
   history: Array<{ x: number; y: number; time: number }>;
   currentSpeedKmh: number;
   peakSpeedKmh: number;
@@ -43,8 +45,10 @@ export interface MotionTrackerConfig {
   sensitivity: 'low' | 'medium' | 'high';
   distanceMeters: number; // Distance from camera to road/target (default 15m)
   angleDegrees: number; // Angle relative to camera line of sight (default 90 deg)
-  minAreaPx: number; // Minimum blob area (rejects tiny noise)
+  minAreaPx: number; // Minimum blob area
   filterMode: TargetFilterMode; // 'all' | 'vehicles' | 'people'
+  isHandheld: boolean; // True: Handheld anti-shake mode (strict AI)
+  autoCapture: boolean; // True: Automatic photo snapshot on confirmed movement
 }
 
 export class MotionTracker {
@@ -72,11 +76,10 @@ export class MotionTracker {
   private maskImageData: ImageData;
 
   // Sensitivity thresholds (difference in luminance 0-255)
-  // Cleaned up to reject camera noise and leaves
   private thresholdMap = {
-    high: 10,
-    medium: 16,
-    low: 26,
+    high: 12,
+    medium: 18,
+    low: 28,
   };
 
   constructor(config?: Partial<MotionTrackerConfig>) {
@@ -84,8 +87,10 @@ export class MotionTracker {
       sensitivity: 'medium',
       distanceMeters: 15.0,
       angleDegrees: 90,
-      minAreaPx: 650, // Rejects leaves, bugs, micro-shake; accepts humans & vehicles
+      minAreaPx: 650,
       filterMode: 'all',
+      isHandheld: true, // Default to true for smartphone handheld use
+      autoCapture: true,
       ...config,
     };
 
@@ -119,7 +124,7 @@ export class MotionTracker {
 
   /**
    * Process a video frame: combines frame differencing with AI detections
-   * Specifically filters for People and Vehicles.
+   * Specifically filters for People and Vehicles with handheld anti-shake compensation.
    */
   public processFrame(
     videoOrCanvas: HTMLVideoElement | HTMLCanvasElement,
@@ -128,14 +133,15 @@ export class MotionTracker {
   ): {
     blobs: MotionBlob[];
     newlyDetectedForLogging: MotionBlob[];
+    isGlobalCameraShake: boolean;
   } {
     const srcW = videoOrCanvas instanceof HTMLVideoElement ? videoOrCanvas.videoWidth : videoOrCanvas.width;
     const srcH = videoOrCanvas instanceof HTMLVideoElement ? videoOrCanvas.videoHeight : videoOrCanvas.height;
     if (srcW === 0 || srcH === 0) {
-      return { blobs: [], newlyDetectedForLogging: [] };
+      return { blobs: [], newlyDetectedForLogging: [], isGlobalCameraShake: false };
     }
 
-    // 1. Downsample for ultra-fast (sub-millisecond) motion difference computation
+    // 1. Downsample for sub-millisecond motion difference computation
     this.sampleCtx.drawImage(videoOrCanvas, 0, 0, this.width, this.height);
     const imgData = this.sampleCtx.getImageData(0, 0, this.width, this.height);
     const data = imgData.data;
@@ -154,13 +160,13 @@ export class MotionTracker {
       for (let i = 0; i < pixelCount; i++) {
         this.backgroundData[i] = currentGray[i];
       }
-      return { blobs: [], newlyDetectedForLogging: [] };
+      return { blobs: [], newlyDetectedForLogging: [], isGlobalCameraShake: false };
     }
 
-    // 2. Dual Motion Differencing (|Frame_t - Frame_{t-1}| & |Frame_t - Background|)
+    // 2. Dual Motion Differencing
     const diffThreshold = this.thresholdMap[this.config.sensitivity];
     const gridMotionCount = new Uint16Array(this.gridCols * this.gridRows);
-    const bgRate = 0.035;
+    const bgRate = 0.04;
 
     const maskData = this.showMotionMask ? this.maskImageData.data : null;
     if (maskData) {
@@ -183,7 +189,7 @@ export class MotionTracker {
 
         this.backgroundData[idx] = bg * (1 - bgRate) + cur * bgRate;
 
-        if (frameDiff > diffThreshold || bgDiff > diffThreshold + 10) {
+        if (frameDiff > diffThreshold || bgDiff > diffThreshold + 12) {
           const gridX = Math.floor(x / this.cellW);
           gridMotionCount[gridRowOffset + gridX]++;
 
@@ -204,77 +210,24 @@ export class MotionTracker {
 
     this.prevFrameData = currentGray;
 
-    // 3. Grid Clustering & Morphological Component Filtering
-    // Requires >= 4 pixels moved inside a cell (filters out minor leaves/sensor grain)
-    const minCellActivePixels = 4;
+    // 3. Global Camera Motion Detection (Handheld Shake / Jerk Detector)
+    // If more than 35% of the screen cells move at the exact same instant, the camera is panning or shaking!
+    const minCellActivePixels = 5;
     const activeGrid = new Uint8Array(this.gridCols * this.gridRows);
+    let activeCellCount = 0;
+
     for (let i = 0; i < activeGrid.length; i++) {
       if (gridMotionCount[i] >= minCellActivePixels) {
         activeGrid[i] = 1;
+        activeCellCount++;
       }
     }
 
-    const visited = new Uint8Array(this.gridCols * this.gridRows);
-    const rawBoxes: Array<{ minX: number; minY: number; maxX: number; maxY: number; cells: number }> = [];
+    const globalShakeRatio = activeCellCount / activeGrid.length;
+    // Camera is actively shaking/panning if > 32% of cells changed at once
+    const isGlobalCameraShake = globalShakeRatio > 0.32;
 
-    for (let gy = 0; gy < this.gridRows; gy++) {
-      for (let gx = 0; gx < this.gridCols; gx++) {
-        const gIdx = gy * this.gridCols + gx;
-        if (activeGrid[gIdx] === 1 && visited[gIdx] === 0) {
-          let minGX = gx;
-          let maxGX = gx;
-          let minGY = gy;
-          let maxGY = gy;
-          let cellCount = 0;
-
-          const queue: number[] = [gIdx];
-          visited[gIdx] = 1;
-
-          while (queue.length > 0) {
-            const curr = queue.pop()!;
-            cellCount++;
-            const cy = Math.floor(curr / this.gridCols);
-            const cx = curr % this.gridCols;
-
-            if (cx < minGX) minGX = cx;
-            if (cx > maxGX) maxGX = cx;
-            if (cy < minGY) minGY = cy;
-            if (cy > maxGY) maxGY = cy;
-
-            const neighbors = [
-              cy > 0 ? (cy - 1) * this.gridCols + cx : -1,
-              cy < this.gridRows - 1 ? (cy + 1) * this.gridCols + cx : -1,
-              cx > 0 ? cy * this.gridCols + (cx - 1) : -1,
-              cx < this.gridCols - 1 ? cy * this.gridCols + (cx + 1) : -1,
-            ];
-
-            for (const n of neighbors) {
-              if (n >= 0 && activeGrid[n] === 1 && visited[n] === 0) {
-                visited[n] = 1;
-                queue.push(n);
-              }
-            }
-          }
-
-          // Anti-Noise: Require at least 2 connected grid cells and < 70% of screen
-          if (cellCount >= 2 && cellCount < this.gridCols * this.gridRows * 0.70) {
-            rawBoxes.push({
-              minX: minGX * this.cellW,
-              minY: minGY * this.cellH,
-              maxX: (maxGX + 1) * this.cellW,
-              maxY: (maxGY + 1) * this.cellH,
-              cells: cellCount,
-            });
-          }
-        }
-      }
-    }
-
-    const mergedBoxes = this.mergeBoxes(rawBoxes);
-    const scaleX = srcW / this.width;
-    const scaleY = srcH / this.height;
-
-    // 4. Candidates from Motion with Strict Shape & Aspect Ratio Classification
+    // 4. Candidate Target Selection
     interface Candidate {
       bbox: { x: number; y: number; w: number; h: number };
       centroid: { x: number; y: number };
@@ -288,10 +241,11 @@ export class MotionTracker {
 
     const candidates: Candidate[] = [];
 
-    // First: Prioritize Confirmed AI Detections
+    // Priority 1: Confirmed AI Detections (True Semantic Recognition of Person / Vehicle)
     for (const ai of aiDetections) {
+      if (ai.score < 0.28) continue;
       const info = getClassInfo(ai.class);
-      // Filter by active target mode
+
       if (this.config.filterMode === 'vehicles' && info.category !== 'vehicle') continue;
       if (this.config.filterMode === 'people' && info.category !== 'person') continue;
 
@@ -307,65 +261,113 @@ export class MotionTracker {
       });
     }
 
-    // Second: Fallback to Morphological Shape Analysis if no AI boxes overlapping
-    for (const b of mergedBoxes) {
-      const x = Math.round(b.minX * scaleX);
-      const y = Math.round(b.minY * scaleY);
-      const w = Math.round((b.maxX - b.minX) * scaleX);
-      const h = Math.round((b.maxY - b.minY) * scaleY);
-      const area = w * h;
+    // Priority 2: Fallback from raw motion ONLY when:
+    // - Tripod mode is enabled (!this.config.isHandheld)
+    // - AND no global camera shake
+    // CRITICAL: When handheld (isHandheld = true), NEVER allow raw pixel differencing
+    // to invent ghost candidates, because hand sway makes doors/trees/shadows look moving!
+    if (!this.config.isHandheld && !isGlobalCameraShake && candidates.length === 0) {
+      const visited = new Uint8Array(this.gridCols * this.gridRows);
+      const rawBoxes: Array<{ minX: number; minY: number; maxX: number; maxY: number; cells: number }> = [];
 
-      if (area < this.config.minAreaPx) continue;
+      for (let gy = 0; gy < this.gridRows; gy++) {
+        for (let gx = 0; gx < this.gridCols; gx++) {
+          const gIdx = gy * this.gridCols + gx;
+          if (activeGrid[gIdx] === 1 && visited[gIdx] === 0) {
+            let minGX = gx;
+            let maxGX = gx;
+            let minGY = gy;
+            let maxGY = gy;
+            let cellCount = 0;
 
-      // Check if already covered by an AI detection
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-      const alreadyCoveredByAi = candidates.some(
-        (c) => c.isAi && Math.hypot(c.centroid.x - cx, c.centroid.y - cy) < Math.max(c.bbox.w, c.bbox.h) * 0.8
-      );
-      if (alreadyCoveredByAi) continue;
+            const queue: number[] = [gIdx];
+            visited[gIdx] = 1;
 
-      const aspectRatio = w / Math.max(1, h);
+            while (queue.length > 0) {
+              const curr = queue.pop()!;
+              cellCount++;
+              const cy = Math.floor(curr / this.gridCols);
+              const cx = curr % this.gridCols;
 
-      // Person: Vertical posture (Height > Width)
-      const isPersonShape = aspectRatio <= 0.85 && h >= 36 && area >= 550;
+              if (cx < minGX) minGX = cx;
+              if (cx > maxGX) maxGX = cx;
+              if (cy < minGY) minGY = cy;
+              if (cy > maxGY) maxGY = cy;
 
-      // Vehicle: Horizontal or balanced box (Width >= 0.65 Height)
-      const isVehicleShape = aspectRatio >= 0.65 && w >= 38 && area >= 850;
+              const neighbors = [
+                cy > 0 ? (cy - 1) * this.gridCols + cx : -1,
+                cy < this.gridRows - 1 ? (cy + 1) * this.gridCols + cx : -1,
+                cx > 0 ? cy * this.gridCols + (cx - 1) : -1,
+                cx < this.gridCols - 1 ? cy * this.gridCols + (cx + 1) : -1,
+              ];
 
-      // REJECT any shape that is neither person nor vehicle (e.g. swaying leaves, random dust)
-      if (!isPersonShape && !isVehicleShape) {
-        continue;
+              for (const n of neighbors) {
+                if (n >= 0 && activeGrid[n] === 1 && visited[n] === 0) {
+                  visited[n] = 1;
+                  queue.push(n);
+                }
+              }
+            }
+
+            if (cellCount >= 2 && cellCount < this.gridCols * this.gridRows * 0.60) {
+              rawBoxes.push({
+                minX: minGX * this.cellW,
+                minY: minGY * this.cellH,
+                maxX: (maxGX + 1) * this.cellW,
+                maxY: (maxGY + 1) * this.cellH,
+                cells: cellCount,
+              });
+            }
+          }
+        }
       }
 
-      if (isPersonShape) {
-        if (this.config.filterMode === 'vehicles') continue; // filtered out
-        candidates.push({
-          bbox: { x, y, w, h },
-          centroid: { x: cx, y: cy },
-          class: 'person',
-          label: 'คน',
-          icon: '🏃',
-          category: 'person',
-          score: 0.75,
-          isAi: false,
-        });
-      } else if (isVehicleShape) {
-        if (this.config.filterMode === 'people') continue; // filtered out
-        candidates.push({
-          bbox: { x, y, w, h },
-          centroid: { x: cx, y: cy },
-          class: 'car',
-          label: 'รถยนต์',
-          icon: '🚗',
-          category: 'vehicle',
-          score: 0.75,
-          isAi: false,
-        });
+      const mergedBoxes = this.mergeBoxes(rawBoxes);
+      const scaleX = srcW / this.width;
+      const scaleY = srcH / this.height;
+
+      for (const b of mergedBoxes) {
+        const x = Math.round(b.minX * scaleX);
+        const y = Math.round(b.minY * scaleY);
+        const w = Math.round((b.maxX - b.minX) * scaleX);
+        const h = Math.round((b.maxY - b.minY) * scaleY);
+        const area = w * h;
+
+        if (area < this.config.minAreaPx) continue;
+
+        const aspectRatio = w / Math.max(1, h);
+        const isPersonShape = aspectRatio <= 0.85 && h >= 40 && area >= 650;
+        const isVehicleShape = aspectRatio >= 0.65 && w >= 45 && area >= 950;
+
+        if (!isPersonShape && !isVehicleShape) continue;
+
+        if (isPersonShape && this.config.filterMode !== 'vehicles') {
+          candidates.push({
+            bbox: { x, y, w, h },
+            centroid: { x: x + w / 2, y: y + h / 2 },
+            class: 'person',
+            label: 'คน',
+            icon: '🏃',
+            category: 'person',
+            score: 0.70,
+            isAi: false,
+          });
+        } else if (isVehicleShape && this.config.filterMode !== 'people') {
+          candidates.push({
+            bbox: { x, y, w, h },
+            centroid: { x: x + w / 2, y: y + h / 2 },
+            class: 'car',
+            label: 'รถยนต์',
+            icon: '🚗',
+            category: 'vehicle',
+            score: 0.70,
+            isAi: false,
+          });
+        }
       }
     }
 
-    // 5. Association & Speed Computation
+    // 5. Association, Handheld Anti-Tremor & Speed Calculation
     const visibleWidthMeters = 1.28 * Math.max(1, this.config.distanceMeters);
     const pixelsPerMeter = srcW / visibleWidthMeters;
     const angleRad = (Math.max(15, Math.min(90, this.config.angleDegrees)) * Math.PI) / 180;
@@ -394,7 +396,11 @@ export class MotionTracker {
         bestBlob.lastSeen = timestamp;
         bestBlob.hits++;
 
-        // Update class/category if AI confirms
+        // Update net translational displacement from initial anchor position
+        const netDx = cand.centroid.x - bestBlob.anchorCentroid.x;
+        const netDy = cand.centroid.y - bestBlob.anchorCentroid.y;
+        bestBlob.netDisplacementPx = Math.hypot(netDx, netDy);
+
         if (cand.isAi || !bestBlob.isAiConfirmed) {
           bestBlob.class = cand.class;
           bestBlob.label = cand.label;
@@ -409,29 +415,37 @@ export class MotionTracker {
           bestBlob.history.shift();
         }
 
-        // Speed Calculation
-        if (bestBlob.history.length >= 3) {
-          const k = Math.min(7, bestBlob.history.length - 1);
-          const past = bestBlob.history[bestBlob.history.length - 1 - k];
-          const curr = bestBlob.history[bestBlob.history.length - 1];
+        // HANDHELD TREMOR REJECTION:
+        // A hand tremor moves back and forth around an anchor (< 25-30 px).
+        // A true driving vehicle or walking person travels 35 - 300+ pixels across the screen!
+        const minDisplacementForSpeed = this.config.isHandheld
+          ? (bestBlob.category === 'person' ? 20 : 32)
+          : 12;
 
-          const dt = (curr.time - past.time) / 1000;
-          if (dt > 0.05) {
-            const dx = curr.x - past.x;
-            const dy = curr.y - past.y;
-            const dPixels = Math.hypot(dx, dy);
+        if (bestBlob.netDisplacementPx < minDisplacementForSpeed || isGlobalCameraShake) {
+          // Classified as stationary or hand tremor
+          bestBlob.isStationary = true;
+          bestBlob.currentSpeedKmh = 0;
+        } else {
+          bestBlob.isStationary = false;
 
-            // Check if stationary (e.g. jiggling in place < 3 pixels)
-            if (dPixels < 3.5) {
-              bestBlob.isStationary = true;
-              bestBlob.currentSpeedKmh = 0;
-            } else {
-              bestBlob.isStationary = false;
+          // Compute instantaneous metric speed over recent 0.15 - 0.4s window
+          if (bestBlob.history.length >= 3) {
+            const k = Math.min(8, bestBlob.history.length - 1);
+            const past = bestBlob.history[bestBlob.history.length - 1 - k];
+            const curr = bestBlob.history[bestBlob.history.length - 1];
+
+            const dt = (curr.time - past.time) / 1000;
+            if (dt > 0.05) {
+              const dx = curr.x - past.x;
+              const dy = curr.y - past.y;
+              const dPixels = Math.hypot(dx, dy);
+
               const dMeters = dPixels / pixelsPerMeter;
               const rawSpeedKmh = (dMeters / dt) * 3.6 * angleCorrectionFactor;
 
-              // Physical acceleration clamp (< 16 m/s^2)
-              const maxDelta = 16 * 3.6 * dt;
+              // Physical acceleration clamp (< 15 m/s^2)
+              const maxDelta = 15 * 3.6 * dt;
               let clampedSpeed = rawSpeedKmh;
               if (bestBlob.currentSpeedKmh > 0 && Math.abs(rawSpeedKmh - bestBlob.currentSpeedKmh) > maxDelta) {
                 clampedSpeed = rawSpeedKmh > bestBlob.currentSpeedKmh
@@ -443,7 +457,7 @@ export class MotionTracker {
               bestBlob.currentSpeedKmh = Math.round(
                 bestBlob.currentSpeedKmh === 0
                   ? clampedSpeed
-                  : 0.35 * clampedSpeed + 0.65 * bestBlob.currentSpeedKmh
+                  : 0.30 * clampedSpeed + 0.70 * bestBlob.currentSpeedKmh
               );
 
               if (bestBlob.currentSpeedKmh > bestBlob.peakSpeedKmh) {
@@ -455,9 +469,28 @@ export class MotionTracker {
               bestBlob.avgSpeedKmh = Math.round(sum / bestBlob.speedSamples.length);
               bestBlob.distanceTraveledPx += dPixels;
 
-              // Auto-log verified moving person or vehicle
-              const minSpeedToLog = bestBlob.category === 'person' ? 2 : 5;
-              if (!bestBlob.hasBeenLogged && bestBlob.hits >= 4 && bestBlob.currentSpeedKmh >= minSpeedToLog) {
+              // STRICT AUTO-SNAPSHOT LOGGING:
+              // 1. autoCapture must be enabled
+              // 2. Not previously logged
+              // 3. Tracked continuously for >= 12 frames (~0.3s)
+              // 4. Must be AI confirmed
+              // 5. Must NOT be shaking camera
+              // 6. Must have moved >= 35 pixels net displacement
+              // 7. Must meet real speed thresholds:
+              //    - Vehicle >= 12 km/h (rejects parked cars swaying in view)
+              //    - Person >= 3.5 km/h (real walking speed)
+              const minSpeedToLog = bestBlob.category === 'person' ? 3.5 : 12;
+              const minNetDisplacementToLog = 35; // px
+
+              if (
+                this.config.autoCapture &&
+                !bestBlob.hasBeenLogged &&
+                bestBlob.hits >= 12 &&
+                bestBlob.isAiConfirmed &&
+                !isGlobalCameraShake &&
+                bestBlob.netDisplacementPx >= minNetDisplacementToLog &&
+                bestBlob.currentSpeedKmh >= minSpeedToLog
+              ) {
                 bestBlob.hasBeenLogged = true;
                 newlyDetectedForLogging.push(bestBlob);
               }
@@ -465,12 +498,14 @@ export class MotionTracker {
           }
         }
       } else {
-        // Create new confirmed person / vehicle track
+        // Initialize new confirmed person / vehicle track
         const newId = this.nextTrackId++;
         const newBlob: MotionBlob = {
           id: newId,
           bbox: cand.bbox,
           centroid: cand.centroid,
+          anchorCentroid: { x: cand.centroid.x, y: cand.centroid.y },
+          netDisplacementPx: 0,
           history: [{ x: cand.centroid.x, y: cand.centroid.y, time: timestamp }],
           currentSpeedKmh: 0,
           peakSpeedKmh: 0,
@@ -505,6 +540,7 @@ export class MotionTracker {
     return {
       blobs: Array.from(this.activeBlobs.values()),
       newlyDetectedForLogging,
+      isGlobalCameraShake,
     };
   }
 

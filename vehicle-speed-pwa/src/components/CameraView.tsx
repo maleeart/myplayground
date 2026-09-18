@@ -1,17 +1,16 @@
 /**
  * Ultra-Fast Optical Motion & AI Target Speedometer (คน & รถ)
  * 
- * Specifically filters and detects:
- * - People (คน): 'person' (🏃)
- * - Vehicles (รถ): 'car', 'motorcycle', 'bus', 'truck', 'bicycle' (🚗, 🏍️, 🚌, 🚚, 🚲)
- * 
- * Rejects all non-target distractions:
- * - Swaying tree leaves, grass, shadows, wind, and camera micro-tremors are 100% ignored.
- * - Dual Engine:
- *     1) COCO-SSD MobileNet AI: Semantic recognition with high accuracy.
- *     2) Morphological Shape Filter: Proportional aspect-ratio matching (H > W for humans, W >= 0.7H for vehicles).
- * - Real-time velocity estimation in km/h based on optical FOV distance reference.
- * - Auto-snapshot capture and persistent detection history log.
+ * Specifically designed for Handheld Smartphone Cameras:
+ * - Anti-Tremor & Handheld Shake Rejection:
+ *     1) Rejects hand shake oscillations via Net Translational Displacement tracking.
+ *     2) Rejects global camera movements (frame-wide panning/tilting).
+ *     3) Strict AI-only candidate mode (NEVER creates ghost targets from raw pixel motion when handheld).
+ * - Filters and tracks ONLY:
+ *     - People (คน): 'person' (🏃)
+ *     - Vehicles (รถ): 'car', 'motorcycle', 'bus', 'truck', 'bicycle' (🚗, 🏍️, 🚌, 🚚, 🚲)
+ * - Strict Auto-Snapshot: Only captures confirmed targets with sustained real motion (no jitter snaps).
+ * - Optical Field-of-View metric speed estimation in km/h.
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -50,7 +49,7 @@ export const CameraView: React.FC = () => {
   // AI Object Detector (COCO-SSD MobileNet v2)
   const detectorRef = useRef<ObjectDetector>(
     new ObjectDetector({
-      scoreThreshold: 0.28,
+      scoreThreshold: 0.30,
       filterMode: 'all',
     })
   );
@@ -58,13 +57,20 @@ export const CameraView: React.FC = () => {
   const isDetectingRef = useRef<boolean>(false);
   const latestAiDetectionsRef = useRef<Detection[]>([]);
 
-  // Motion Tracker Engine (Frame Differencing + Morphological Shape Profiler)
+  // Handheld Mode & Auto-Capture Controls
+  const [isHandheld, setIsHandheld] = useState<boolean>(true);
+  const [autoCapture, setAutoCapture] = useState<boolean>(true);
+  const [isCameraShaking, setIsCameraShaking] = useState<boolean>(false);
+
+  // Motion Tracker Engine (Frame Differencing + Handheld Anti-Tremor)
   const motionTrackerRef = useRef<MotionTracker>(
     new MotionTracker({
       distanceMeters: 15.0,
       sensitivity: 'medium',
-      minAreaPx: 600, // Rejects leaves, wind, and camera micro-tremors
+      minAreaPx: 650,
       filterMode: 'all',
+      isHandheld: true,
+      autoCapture: true,
     })
   );
 
@@ -112,7 +118,7 @@ export const CameraView: React.FC = () => {
       .init()
       .then(() => {
         setIsAiReady(true);
-        setToastNote('🧠 ระบบ AI ตรวจจับคนและรถพร้อมใช้งาน');
+        setToastNote('🧠 ระบบ AI ตรวจจับคนและรถพร้อมใช้งาน (กันมือสั่นเปิดอยู่)');
         setTimeout(() => setToastNote(null), 2500);
       })
       .catch((err) => {
@@ -129,6 +135,8 @@ export const CameraView: React.FC = () => {
     motionTrackerRef.current.config.distanceMeters = distanceMeters;
     motionTrackerRef.current.config.sensitivity = sensitivity;
     motionTrackerRef.current.config.filterMode = targetFilter;
+    motionTrackerRef.current.config.isHandheld = isHandheld;
+    motionTrackerRef.current.config.autoCapture = autoCapture;
     detectorRef.current.setFilterMode(targetFilter);
 
     // Dynamic noise thresholds
@@ -144,7 +152,7 @@ export const CameraView: React.FC = () => {
     }
 
     audioAlert.enabled = soundEnabled;
-  }, [distanceMeters, sensitivity, soundEnabled, targetFilter]);
+  }, [distanceMeters, sensitivity, soundEnabled, targetFilter, isHandheld, autoCapture]);
 
   /**
    * Capture cropped snapshot of confirmed human or vehicle
@@ -176,6 +184,49 @@ export const CameraView: React.FC = () => {
       return undefined;
     }
   };
+
+  /**
+   * Manual snapshot trigger
+   */
+  const handleManualCapture = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || activeBlobs.length === 0) {
+      setToastNote('⚠️ ไม่พบเป้าหมายคนหรือรถบนจอ');
+      setTimeout(() => setToastNote(null), 2000);
+      return;
+    }
+    const target = activeBlobs[0];
+    const snapUrl = captureSnapshot(canvas, target.bbox);
+    const now = new Date();
+    const timeStr = now.toTimeString().split(' ')[0];
+    const isOver = target.currentSpeedKmh > speedLimitKmh;
+
+    const newRecord: DetectionRecord = {
+      id: `${target.id}-${Date.now()}`,
+      trackId: target.id,
+      vehicleClass: `${target.icon} ${target.label}`,
+      timestamp: timeStr,
+      peakSpeedKmh: target.peakSpeedKmh || target.currentSpeedKmh,
+      avgSpeedKmh: target.avgSpeedKmh || target.currentSpeedKmh,
+      distanceMeters: Math.round(target.distanceTraveledPx / (canvas.width / (1.28 * distanceMeters))),
+      isOverLimit: isOver,
+      snapshotUrl: snapUrl,
+    };
+
+    setRecords((prev) => {
+      const updated = [newRecord, ...prev.slice(0, 49)];
+      try {
+        localStorage.setItem('speed_pwa_records', JSON.stringify(updated));
+      } catch {
+        // storage full
+      }
+      return updated;
+    });
+
+    audioAlert.playDetectBlip();
+    setToastNote(`📸 แคปภาพ ${target.label} #${target.id} สำเร็จ`);
+    setTimeout(() => setToastNote(null), 2000);
+  }, [activeBlobs, distanceMeters, speedLimitKmh]);
 
   /**
    * Start rear camera stream
@@ -329,7 +380,6 @@ export const CameraView: React.FC = () => {
       let inputSource: HTMLVideoElement | HTMLCanvasElement | null = null;
 
       if (sourceMode === 'sim') {
-        // Simulation source
         const simCanvas = simulatorRef.current.render(timestamp);
         if (canvas.width !== simCanvas.width || canvas.height !== simCanvas.height) {
           canvas.width = simCanvas.width;
@@ -338,10 +388,8 @@ export const CameraView: React.FC = () => {
         ctx.drawImage(simCanvas, 0, 0, canvas.width, canvas.height);
         inputSource = simCanvas;
 
-        // In simulator mode: supply synthetic detections
         latestAiDetectionsRef.current = simulatorRef.current.getDetections();
       } else {
-        // Camera source
         const video = videoRef.current;
         if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0) {
           if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
@@ -365,7 +413,6 @@ export const CameraView: React.FC = () => {
               });
           }
         } else {
-          // Standby Screen
           if (canvas.width === 0 || canvas.height === 0) {
             canvas.width = 640;
             canvas.height = 480;
@@ -385,12 +432,13 @@ export const CameraView: React.FC = () => {
         motionTrackerRef.current.showMotionMask = showMask;
 
         // 1. Process Frame Differencing + Target Classification (คน & รถ)
-        const { blobs, newlyDetectedForLogging } = motionTrackerRef.current.processFrame(
+        const { blobs, newlyDetectedForLogging, isGlobalCameraShake } = motionTrackerRef.current.processFrame(
           inputSource,
           timestamp,
           latestAiDetectionsRef.current
         );
         setActiveBlobs(blobs);
+        setIsCameraShaking(isGlobalCameraShake);
 
         // 2. Draw Motion Mask if enabled
         if (showMask) {
@@ -401,7 +449,7 @@ export const CameraView: React.FC = () => {
           ctx.restore();
         }
 
-        // 3. Handle Auto-Snapshot & Logging for moving targets
+        // 3. Handle Auto-Snapshot & Logging for confirmed moving targets
         if (newlyDetectedForLogging.length > 0) {
           for (const blob of newlyDetectedForLogging) {
             const snapUrl = captureSnapshot(inputSource, blob.bbox);
@@ -470,7 +518,7 @@ export const CameraView: React.FC = () => {
         ? '#10b981' // Green (Person)
         : isMoving
         ? '#38bdf8' // Cyan (Moving Vehicle)
-        : '#f59e0b'; // Amber (Stationary)
+        : '#f59e0b'; // Amber (Stationary / Hand tremor)
 
       // 1. Trajectory Trail
       if (history.length > 1 && isMoving) {
@@ -529,7 +577,7 @@ export const CameraView: React.FC = () => {
       ctx.fill();
 
       // 4. Live Target Badge Overlay
-      const badgeW = 135;
+      const badgeW = 140;
       const badgeH = 32;
       const badgeX = bbox.x + bbox.w / 2 - badgeW / 2;
       const badgeY = Math.max(10, bbox.y - badgeH - 8);
@@ -585,6 +633,14 @@ export const CameraView: React.FC = () => {
         className="w-full h-full object-contain cursor-crosshair"
       />
 
+      {/* Global Camera Shake Alert */}
+      {isCameraShaking && (
+        <div className="absolute top-16 z-40 self-center bg-amber-950/95 border border-amber-500/80 text-amber-200 px-3.5 py-1.5 rounded-xl text-xs shadow-2xl backdrop-blur-md animate-in fade-in flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+          <span>📱 กล้องกำลังส่าย — ถือให้นิ่งเพื่อเริ่มวัดความเร็ว (ระบบกันสั่นตัดภาพขยะอัตโนมัติ)</span>
+        </div>
+      )}
+
       {/* Camera Error Notice */}
       {sourceMode === 'camera' && cameraError && (
         <div className="absolute top-16 left-4 right-4 bg-slate-900/95 border border-amber-600 text-amber-200 p-4 rounded-2xl shadow-2xl flex flex-col gap-2 z-30">
@@ -624,7 +680,7 @@ export const CameraView: React.FC = () => {
 
       {/* ULTRA-CLEAN HUD CONTROLS OVERLAY */}
       <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-2.5 sm:p-3">
-        {/* Top Minimal Action Bar */}
+        {/* Top Action Bar */}
         <div className="flex flex-col gap-2 w-full">
           <div className="pointer-events-auto flex items-center justify-between gap-2 bg-slate-950/90 backdrop-blur-md px-3 py-2 rounded-2xl border border-slate-800 shadow-2xl overflow-x-auto no-scrollbar w-full">
             {/* Left: Mode Switch & Status */}
@@ -664,6 +720,29 @@ export const CameraView: React.FC = () => {
                   <span>โหมดจำลอง</span>
                 </button>
               </div>
+
+              {/* Handheld Anti-Shake Switch */}
+              <button
+                onClick={() => {
+                  const next = !isHandheld;
+                  setIsHandheld(next);
+                  motionTrackerRef.current.config.isHandheld = next;
+                  setToastNote(
+                    next
+                      ? '📱 เปิดโหมดถือด้วยมือ (เปิดระบบกันสั่น ตัดวัตถุรบกวน 100%)'
+                      : '📐 เปิดโหมดขาตั้ง (ไวต่อความเคลื่อนไหว)'
+                  );
+                  setTimeout(() => setToastNote(null), 2500);
+                }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold border transition ${
+                  isHandheld
+                    ? 'bg-indigo-600/35 border-indigo-500 text-indigo-200 shadow'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}
+                title={isHandheld ? 'โหมดถือด้วยมือ: เปิดระบบกันสั่น' : 'โหมดขาตั้ง'}
+              >
+                <span>{isHandheld ? '📱 ถือมือ (กันสั่น)' : '📐 ขาตั้ง'}</span>
+              </button>
 
               {/* Target Filter Selector: คน & รถ */}
               <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
@@ -748,6 +827,29 @@ export const CameraView: React.FC = () => {
                   </button>
                 ))}
               </div>
+
+              {/* Auto-Capture Toggle */}
+              <button
+                onClick={() => {
+                  const next = !autoCapture;
+                  setAutoCapture(next);
+                  motionTrackerRef.current.config.autoCapture = next;
+                  setToastNote(
+                    next
+                      ? '📸 เปิดถ่ายภาพอัตโนมัติ (เฉพาะรถ/คนวิ่งผ่านจริง)'
+                      : '⏸️ ปิดถ่ายภาพอัตโนมัติ (ดูความเร็วสดอย่างเดียว ไม่แคปมั่ว)'
+                  );
+                  setTimeout(() => setToastNote(null), 2500);
+                }}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold border transition ${
+                  autoCapture
+                    ? 'bg-sky-600/30 border-sky-500 text-sky-200'
+                    : 'bg-slate-800 border-slate-700 text-slate-400'
+                }`}
+                title={autoCapture ? 'ถ่ายภาพอัตโนมัติ: เปิด' : 'ถ่ายภาพอัตโนมัติ: ปิด'}
+              >
+                <span>{autoCapture ? '📸 ออโต้แคป' : '⏸️ ปิดแคป'}</span>
+              </button>
 
               {/* Anti-Noise Sensitivity */}
               <div className="hidden sm:flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
@@ -929,63 +1031,75 @@ export const CameraView: React.FC = () => {
           )}
         </div>
 
-        {/* Bottom Live Feed Stats Bar */}
-        <div className="pointer-events-auto flex gap-2 overflow-x-auto pb-1 max-w-full no-scrollbar">
-          {activeBlobs.length === 0 ? (
-            <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 px-3.5 py-2 rounded-xl text-xs text-slate-300 flex items-center gap-2 shadow-xl">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-              <span>
-                {sourceMode === 'sim'
-                  ? '🎮 กำลังรอรถแล่นผ่าน (กดปุ่ม "ปล่อยรถ 1 คัน" เพื่อเริ่มทดสอบ)'
-                  : targetFilter === 'vehicles'
-                  ? '🚗 กำลังสแกนหาเฉพาะ "รถยนต์ / มอเตอร์ไซค์ / รถบรรทุก" (ตัดสิ่งรบกวน 100%)'
-                  : targetFilter === 'people'
-                  ? '🏃 กำลังสแกนหาเฉพาะ "คนเดิน / คนวิ่ง" (ตัดสิ่งรบกวน 100%)'
-                  : '📡 กำลังสแกนหา "คน" หรือ "รถ" (ตัดใบไม้ ลม และสิ่งรบกวนออกทั้งหมด)'}
-              </span>
-            </div>
-          ) : (
-            activeBlobs.map((blob) => {
-              const isOver = blob.currentSpeedKmh > speedLimitKmh;
-              return (
-                <div
-                  key={blob.id}
-                  className={`shrink-0 flex items-center gap-3 px-3.5 py-2 rounded-xl border backdrop-blur-md transition shadow-2xl ${
-                    isOver
-                      ? 'border-rose-500 bg-rose-950/85 text-rose-200'
-                      : blob.category === 'person'
-                      ? 'border-emerald-500 bg-emerald-950/85 text-emerald-200'
-                      : 'border-sky-500 bg-sky-950/85 text-sky-200'
-                  }`}
-                >
-                  <div className="flex flex-col items-center">
-                    <span className="text-base">{blob.icon}</span>
-                    <span className="text-[10px] font-mono text-slate-300">#{blob.id}</span>
-                  </div>
+        {/* Bottom Live Feed Stats & Manual Snap Row */}
+        <div className="pointer-events-auto flex items-center justify-between gap-2 max-w-full">
+          <div className="flex gap-2 overflow-x-auto pb-1 max-w-full no-scrollbar flex-1">
+            {activeBlobs.length === 0 ? (
+              <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 px-3.5 py-2 rounded-xl text-xs text-slate-300 flex items-center gap-2 shadow-xl">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <span>
+                  {sourceMode === 'sim'
+                    ? '🎮 กำลังรอรถแล่นผ่าน (กดปุ่ม "ปล่อยรถ 1 คัน" เพื่อเริ่มทดสอบ)'
+                    : isHandheld
+                    ? '📱 ระบบกันสั่นเปิดอยู่: เล็งกล้องไปที่ถนน (จะล็อกเฉพาะคนหรือรถที่วิ่งผ่านจริง)'
+                    : '📡 กำลังสแกนหา "คน" หรือ "รถ"'}
+                </span>
+              </div>
+            ) : (
+              activeBlobs.map((blob) => {
+                const isOver = blob.currentSpeedKmh > speedLimitKmh;
+                return (
+                  <div
+                    key={blob.id}
+                    className={`shrink-0 flex items-center gap-3 px-3.5 py-2 rounded-xl border backdrop-blur-md transition shadow-2xl ${
+                      isOver
+                        ? 'border-rose-500 bg-rose-950/85 text-rose-200'
+                        : blob.category === 'person'
+                        ? 'border-emerald-500 bg-emerald-950/85 text-emerald-200'
+                        : 'border-sky-500 bg-sky-950/85 text-sky-200'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center">
+                      <span className="text-base">{blob.icon}</span>
+                      <span className="text-[10px] font-mono text-slate-300">#{blob.id}</span>
+                    </div>
 
-                  <div className="flex flex-col">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-white">{blob.label}</span>
-                      {blob.isStationary ? (
-                        <span className="text-[10px] text-amber-400 font-medium">[จอดนิ่ง]</span>
-                      ) : (
-                        <div className="flex items-baseline gap-0.5">
-                          <span className="text-base font-black font-mono">
-                            {blob.currentSpeedKmh}
-                          </span>
-                          <span className="text-[10px] font-sans font-medium">km/h</span>
-                        </div>
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-white">{blob.label}</span>
+                        {blob.isStationary ? (
+                          <span className="text-[10px] text-amber-400 font-medium">[จอดนิ่ง]</span>
+                        ) : (
+                          <div className="flex items-baseline gap-0.5">
+                            <span className="text-base font-black font-mono">
+                              {blob.currentSpeedKmh}
+                            </span>
+                            <span className="text-[10px] font-sans font-medium">km/h</span>
+                          </div>
+                        )}
+                      </div>
+                      {!blob.isStationary && (
+                        <span className="text-[10px] text-slate-300">
+                          สูงสุด: {blob.peakSpeedKmh} km/h
+                        </span>
                       )}
                     </div>
-                    {!blob.isStationary && (
-                      <span className="text-[10px] text-slate-300">
-                        สูงสุด: {blob.peakSpeedKmh} km/h
-                      </span>
-                    )}
                   </div>
-                </div>
-              );
-            })
+                );
+              })
+            )}
+          </div>
+
+          {/* Floating Manual Capture Button */}
+          {activeBlobs.length > 0 && (
+            <button
+              onClick={handleManualCapture}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-2xl border border-emerald-400/40 active:scale-95 transition"
+              title="กดเพื่อถ่ายภาพเป้าหมายตอนนี้ทันที"
+            >
+              <Camera className="w-4 h-4" />
+              <span className="hidden sm:inline">แคปภาพ</span>
+            </button>
           )}
         </div>
       </div>
@@ -997,7 +1111,7 @@ export const CameraView: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
               <div className="flex items-center gap-2 text-sky-400 font-bold text-base">
                 <HelpCircle className="w-5 h-5" />
-                <span>การแยกแยะเฉพาะคนและรถ & การวัดความเร็ว</span>
+                <span>ระบบกันมือสั่น & การตรวจจับคนและรถ</span>
               </div>
               <button
                 onClick={() => setShowHelpModal(false)}
@@ -1010,41 +1124,44 @@ export const CameraView: React.FC = () => {
             <div className="space-y-4 text-xs leading-relaxed text-slate-300">
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <h4 className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
-                  <span>1. ป้องกันความไวเกิน (Anti-Noise Filter)</span>
+                  <span>1. ระบบกันมือสั่น (Handheld Anti-Tremor)</span>
                 </h4>
                 <p>
-                  ระบบจะตัดสิ่งรบกวนที่ไม่ใช่เป้าหมายออกทั้งหมด เช่น ใบไม้ไหว ลมพัด เงาทอดบนพื้น หรือมือที่สั่นเล็กน้อย 
-                  โดยจะยอมรับเฉพาะวัตถุที่มีขนาดและสัดส่วนตรงตามสรีระของคนหรือโครงสร้างของยานพาหนะเท่านั้น
+                  เมื่อถือโทรศัพท์ด้วยมือ มือจะส่ายไปมาเล็กน้อย ระบบจะ:
+                  <br />• <strong>ล็อกเป้าหมายผ่าน AI เท่านั้น:</strong> จะไม่สร้างกรอบขึ้นมาจากสิ่งของทั่วไป (เช่น ผนัง ประตู ต้นไม้ เงา)
+                  <br />• <strong>ตัดการสั่นไหวไปมา:</strong> การสั่นของมือจะมีระยะขยับส่ายไปมาอยู่ที่เดิม (น้อยกว่า 30 พิกเซล) ระบบจะไม่นำมาคิดเป็นความเร็วและไม่แคปภาพ
+                  <br />• <strong>จับเฉพาะการเคลื่อนที่จริง:</strong> รถหรือคนต้องเคลื่อนที่ไปในทิศทางหนึ่งอย่างต่อเนื่อง (ระยะกระจัดเกิน 35 พิกเซล) ถึงจะคำนวณความเร็ว
                 </p>
               </div>
 
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <h4 className="font-bold text-sky-400 mb-1 flex items-center gap-1.5">
-                  <span>2. ตรวจจับเฉพาะคน (🏃) หรือ รถ (🚗)</span>
+                  <span>2. การควบคุมการถ่ายภาพอัตโนมัติ (Auto-Capture)</span>
                 </h4>
                 <p>
-                  ระบบผสาน <strong>AI MobileNet</strong> เข้ากับ <strong>การวิเคราะห์สัดส่วนรูปร่าง (Morphology)</strong>:
-                  <br />• <strong>คน (Person):</strong> สัดส่วนแนวตั้ง (ความสูงมากกว่าความกว้าง $H &gt; W$)
-                  <br />• <strong>รถยนต์/ยานพาหนะ (Vehicle):</strong> สัดส่วนแนวนอนหรือทรงกล่อง ($W \ge 0.7H$)
-                  <br />คุณสามารถเลือกแท็บ <strong>"👥 คน & รถ"</strong>, <strong>"🚗 เฉพาะรถ"</strong> หรือ <strong>"🏃 เฉพาะคน"</strong> ได้บนแถบด้านบน
+                  • สามารถกดปุ่ม <strong>"📸 ออโต้แคป"</strong> บนแถบด้านบนเพื่อ <strong>ปิดการถ่ายภาพอัตโนมัติ</strong> ได้ทุกเมื่อ หากต้องการเพียงดูความเร็วบนหน้าจอสดโดยไม่ให้ภาพล้นประวัติ
+                  <br />• สามารถกดปุ่ม <strong>"📸 แคปภาพ"</strong> ด้านขวาล่างเพื่อกดบันทึกภาพเป้าหมายด้วยตนเองได้ทันที
                 </p>
               </div>
 
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <h4 className="font-bold text-amber-400 mb-1 flex items-center gap-1.5">
-                  <span>3. การคำนวณความเร็ว (Optical Speed Math)</span>
+                  <span>3. เงื่อนไขการถ่ายภาพออโต้ที่แม่นยำ</span>
                 </h4>
                 <p>
-                  เมื่อคนหรือรถเคลื่อนที่ ระบบจะวัดการขยับของจุดกึ่งกลาง (พิกเซล) เทียบกับเวลาจริง และแปลงเป็นเมตรตามระยะห่าง (5m ในห้อง, 10m-25m ริมถนน) แล้วคูณด้วย 3.6 ออกมาเป็น km/h พร้อมบันทึกภาพถ่ายประวัติอัตโนมัติ
+                  ระบบจะแคปภาพอัตโนมัติเฉพาะเมื่อ:
+                  <br />1) ได้รับการยืนยันจาก AI ว่าเป็นคนหรือรถจริง
+                  <br />2) เคลื่อนไหวต่อเนื่องอย่างน้อย 12 เฟรม (~0.3 วินาที)
+                  <br />3) ความเร็วรถตั้งแต่ 15 km/h ขึ้นไป หรือ คนเดินตั้งแต่ 3.5 km/h ขึ้นไป (รถจอดนิ่งหรือมือขยับจะไม่แคป)
                 </p>
               </div>
 
               <div className="bg-sky-950/30 p-3 rounded-xl border border-sky-600/40">
-                <h4 className="font-bold text-sky-300 mb-1">💡 เคล็ดลับการใช้งาน</h4>
+                <h4 className="font-bold text-sky-300 mb-1">💡 เคล็ดลับการถือกล้อง</h4>
                 <ul className="list-disc pl-4 space-y-1">
-                  <li>หากส่องริมถนน แนะนำให้เลือก <strong>"🚗 เฉพาะรถ"</strong> เพื่อไม่ให้มีสิ่งอื่นรบกวน</li>
-                  <li>หากใช้ในห้องหรือทางเดินคน แนะนำให้เลือก <strong>"🏃 เฉพาะคน"</strong> และตั้งระยะ 5m</li>
-                  <li>สามารถปรับระดับ <strong>"กรองรบกวน"</strong> เป็น <strong>"ตัดขยะสูงสุด"</strong> เมื่อมีลมพัดแรง</li>
+                  <li>เปิดโหมด <strong>"📱 ถือมือ (กันสั่น)"</strong> เป็นค่าเริ่มต้นเสมอเมื่อถือด้วยมือ</li>
+                  <li>หากส่องริมถนน แนะนำให้กดแท็บ <strong>"🚗 เฉพาะรถ"</strong> เพื่อความแม่นยำสูงสุด</li>
+                  <li>หากมีลมพัดแรง สามารถกด <strong>"กรองรบกวน: ตัดขยะสูงสุด"</strong></li>
                 </ul>
               </div>
             </div>
