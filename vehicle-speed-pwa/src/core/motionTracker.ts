@@ -247,7 +247,9 @@ export class MotionTracker {
 
     // Priority 1: Confirmed AI Detections (True Semantic Recognition of Person / Vehicle)
     for (const ai of aiDetections) {
-      if (ai.score < 0.28) continue;
+      const isPersonTarget = ai.class === 'person';
+      const minScore = isPersonTarget ? 0.20 : 0.26;
+      if (ai.score < minScore) continue;
       const info = getClassInfo(ai.class);
 
       if (this.config.filterMode === 'vehicles' && info.category !== 'vehicle') continue;
@@ -419,12 +421,14 @@ export class MotionTracker {
           bestBlob.history.shift();
         }
 
-        // HANDHELD TREMOR REJECTION:
-        // A hand tremor moves back and forth around an anchor (< 25-30 px).
-        // A true driving vehicle or walking person travels 35 - 300+ pixels across the screen!
-        const minDisplacementForSpeed = this.config.isHandheld
-          ? (bestBlob.category === 'person' ? 20 : 32)
-          : 12;
+        // HANDHELD TREMOR REJECTION & RESPONSIVE SPEED TUNING:
+        const isLocked = this.config.lockedBlobId === bestBlob.id;
+        const isPerson = bestBlob.category === 'person';
+        const minDisplacementForSpeed = isLocked
+          ? (isPerson ? 4 : 8)
+          : (this.config.isHandheld
+              ? (isPerson ? 6 : 18)
+              : (isPerson ? 4 : 8));
 
         if (bestBlob.netDisplacementPx < minDisplacementForSpeed || isGlobalCameraShake) {
           // Classified as stationary or hand tremor
@@ -433,14 +437,16 @@ export class MotionTracker {
         } else {
           bestBlob.isStationary = false;
 
-          // Compute instantaneous metric speed over recent 0.15 - 0.4s window
-          if (bestBlob.history.length >= 3) {
-            const k = Math.min(8, bestBlob.history.length - 1);
+          // Compute instantaneous metric speed (responsive window: 0.06 - 0.25s)
+          const minHistoryLen = isPerson ? 2 : 3;
+          if (bestBlob.history.length >= minHistoryLen) {
+            const maxK = isPerson ? 4 : 6;
+            const k = Math.min(maxK, bestBlob.history.length - 1);
             const past = bestBlob.history[bestBlob.history.length - 1 - k];
             const curr = bestBlob.history[bestBlob.history.length - 1];
 
             const dt = (curr.time - past.time) / 1000;
-            if (dt > 0.05) {
+            if (dt >= 0.025) {
               const dx = curr.x - past.x;
               const dy = curr.y - past.y;
               const dPixels = Math.hypot(dx, dy);
@@ -457,11 +463,12 @@ export class MotionTracker {
                   : Math.max(0, bestBlob.currentSpeedKmh - maxDelta);
               }
 
-              // Smooth speed with EMA
+              // Smooth speed with responsive EMA (0.60 for person, 0.35 for vehicle)
+              const emaWeight = isPerson ? 0.60 : 0.35;
               bestBlob.currentSpeedKmh = Math.round(
                 bestBlob.currentSpeedKmh === 0
                   ? clampedSpeed
-                  : 0.30 * clampedSpeed + 0.70 * bestBlob.currentSpeedKmh
+                  : emaWeight * clampedSpeed + (1 - emaWeight) * bestBlob.currentSpeedKmh
               );
 
               if (bestBlob.currentSpeedKmh > bestBlob.peakSpeedKmh) {
@@ -473,20 +480,9 @@ export class MotionTracker {
               bestBlob.avgSpeedKmh = Math.round(sum / bestBlob.speedSamples.length);
               bestBlob.distanceTraveledPx += dPixels;
 
-              // STRICT AUTO-SNAPSHOT LOGGING:
-              // 1. autoCapture must be enabled
-              // 2. Not previously logged
-              // 3. Tracked continuously for >= 12 frames (~0.3s)
               // STRICT OVERSPEED AUTO-SNAPSHOT LOGGING:
-              // 1. autoCapture must be enabled
-              // 2. Target must match locked target (if one is locked)
-              // 3. Must EXCEED speed limit (currentSpeedKmh > speedLimit or peakSpeedKmh > speedLimit)
-              // 4. Not previously logged
-              // 5. Tracked continuously for >= 10 frames (~0.25s)
-              // 6. Must be AI confirmed
-              // 7. Must NOT be shaking camera
-              // 8. Must have moved >= 35 pixels net displacement
-              const minNetDisplacementToLog = 35; // px
+              const minNetDisplacementToLog = isPerson ? 10 : 25; // px
+              const minHitsToLog = isPerson ? 5 : 8;
               const limit = this.config.speedLimitKmh ?? 60;
               const isOverSpeedLimit =
                 bestBlob.currentSpeedKmh > limit || bestBlob.peakSpeedKmh > limit;
@@ -499,7 +495,7 @@ export class MotionTracker {
                 isTargetAllowedToLog &&
                 isOverSpeedLimit &&
                 !bestBlob.hasBeenLogged &&
-                bestBlob.hits >= 10 &&
+                bestBlob.hits >= minHitsToLog &&
                 bestBlob.isAiConfirmed &&
                 !isGlobalCameraShake &&
                 bestBlob.netDisplacementPx >= minNetDisplacementToLog

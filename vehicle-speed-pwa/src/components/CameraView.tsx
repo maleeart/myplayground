@@ -533,7 +533,7 @@ export const CameraView: React.FC = () => {
       if (lockedBlob) {
         const { bbox, centroid, history, currentSpeedKmh, isStationary } = lockedBlob;
         const isOver = currentSpeedKmh > speedLimitKmh;
-        const isMoving = currentSpeedKmh > 2 && !isStationary;
+        const isMoving = currentSpeedKmh >= 1 && !isStationary;
 
         const themeColor = isOver
           ? '#ef4444' // Red (Overspeed)
@@ -914,7 +914,7 @@ export const CameraView: React.FC = () => {
                 </span>
                 <input
                   type="range"
-                  min="20"
+                  min="0"
                   max="140"
                   step="5"
                   value={speedLimitKmh}
