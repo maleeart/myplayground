@@ -39,6 +39,19 @@ export interface MotionBlob {
   score: number;
   isStationary: boolean;
   isAiConfirmed: boolean;
+  stationaryCount?: number;
+  lastSpeedUpdateTime?: number;
+}
+
+export interface Candidate {
+  bbox: { x: number; y: number; w: number; h: number };
+  centroid: { x: number; y: number };
+  class: string;
+  label: string;
+  icon: string;
+  category: 'person' | 'vehicle';
+  score: number;
+  isAi: boolean;
 }
 
 export interface MotionTrackerConfig {
@@ -70,6 +83,7 @@ export class MotionTracker {
 
   private nextTrackId = 1;
   private activeBlobs: Map<number, MotionBlob> = new Map();
+  private lastAiDetectionsRef: Detection[] | null = null;
 
   public config: MotionTrackerConfig;
   public showMotionMask: boolean = false;
@@ -124,6 +138,7 @@ export class MotionTracker {
     this.prevFrameData = null;
     this.backgroundData = null;
     this.activeBlobs.clear();
+    this.lastAiDetectionsRef = null;
   }
 
   /**
@@ -143,6 +158,11 @@ export class MotionTracker {
     const srcH = videoOrCanvas instanceof HTMLVideoElement ? videoOrCanvas.videoHeight : videoOrCanvas.height;
     if (srcW === 0 || srcH === 0) {
       return { blobs: [], newlyDetectedForLogging: [], isGlobalCameraShake: false };
+    }
+
+    const isFreshAiFrame = aiDetections.length > 0 && aiDetections !== this.lastAiDetectionsRef;
+    if (isFreshAiFrame) {
+      this.lastAiDetectionsRef = aiDetections;
     }
 
     // 1. Downsample for sub-millisecond motion difference computation
@@ -228,21 +248,10 @@ export class MotionTracker {
     }
 
     const globalShakeRatio = activeCellCount / activeGrid.length;
-    // Camera is actively shaking/panning if > 32% of cells changed at once
-    const isGlobalCameraShake = globalShakeRatio > 0.32;
+    // Camera is actively shaking/panning if > 48% of cells changed at once
+    const isGlobalCameraShake = globalShakeRatio > 0.48;
 
     // 4. Candidate Target Selection
-    interface Candidate {
-      bbox: { x: number; y: number; w: number; h: number };
-      centroid: { x: number; y: number };
-      class: string;
-      label: string;
-      icon: string;
-      category: 'person' | 'vehicle';
-      score: number;
-      isAi: boolean;
-    }
-
     const candidates: Candidate[] = [];
 
     // Priority 1: Confirmed AI Detections (True Semantic Recognition of Person / Vehicle)
@@ -374,15 +383,51 @@ export class MotionTracker {
     }
 
     // 5. Association, Handheld Anti-Tremor & Speed Calculation
-    const visibleWidthMeters = 1.28 * Math.max(1, this.config.distanceMeters);
-    const pixelsPerMeter = srcW / visibleWidthMeters;
     const angleRad = (Math.max(15, Math.min(90, this.config.angleDegrees)) * Math.PI) / 180;
     const angleCorrectionFactor = 1.0 / Math.sin(angleRad);
 
     const newlyDetectedForLogging: MotionBlob[] = [];
     const matchedTrackIds = new Set<number>();
+    const matchedCandidateIndices = new Set<number>();
 
-    for (const cand of candidates) {
+    // Priority 1: User-locked target gets first-choice matching to maintain uninterrupted tracking
+    const lockedId = this.config.lockedBlobId;
+    if (lockedId != null && this.activeBlobs.has(lockedId)) {
+      const lockedBlob = this.activeBlobs.get(lockedId)!;
+      let bestCandIdx = -1;
+      let minLockedDist = 200 * (srcW / 640);
+
+      for (let i = 0; i < candidates.length; i++) {
+        const cand = candidates[i];
+        if (cand.category !== lockedBlob.category) continue;
+        const d = Math.hypot(cand.centroid.x - lockedBlob.centroid.x, cand.centroid.y - lockedBlob.centroid.y);
+        if (d < minLockedDist) {
+          minLockedDist = d;
+          bestCandIdx = i;
+        }
+      }
+
+      if (bestCandIdx >= 0) {
+        matchedTrackIds.add(lockedBlob.id);
+        matchedCandidateIndices.add(bestCandIdx);
+        this.updateBlob(
+          lockedBlob,
+          candidates[bestCandIdx],
+          timestamp,
+          isFreshAiFrame,
+          srcW,
+          angleCorrectionFactor,
+          globalShakeRatio,
+          isGlobalCameraShake,
+          newlyDetectedForLogging
+        );
+      }
+    }
+
+    // General matching for remaining candidates
+    for (let i = 0; i < candidates.length; i++) {
+      if (matchedCandidateIndices.has(i)) continue;
+      const cand = candidates[i];
       let bestBlob: MotionBlob | null = null;
       let minDistance = 150 * (srcW / 640);
 
@@ -397,115 +442,17 @@ export class MotionTracker {
 
       if (bestBlob) {
         matchedTrackIds.add(bestBlob.id);
-        bestBlob.bbox = cand.bbox;
-        bestBlob.centroid = cand.centroid;
-        bestBlob.lastSeen = timestamp;
-        bestBlob.hits++;
-
-        // Update net translational displacement from initial anchor position
-        const netDx = cand.centroid.x - bestBlob.anchorCentroid.x;
-        const netDy = cand.centroid.y - bestBlob.anchorCentroid.y;
-        bestBlob.netDisplacementPx = Math.hypot(netDx, netDy);
-
-        if (cand.isAi || !bestBlob.isAiConfirmed) {
-          bestBlob.class = cand.class;
-          bestBlob.label = cand.label;
-          bestBlob.icon = cand.icon;
-          bestBlob.category = cand.category;
-          bestBlob.score = cand.score;
-          if (cand.isAi) bestBlob.isAiConfirmed = true;
-        }
-
-        bestBlob.history.push({ x: cand.centroid.x, y: cand.centroid.y, time: timestamp });
-        if (bestBlob.history.length > 30) {
-          bestBlob.history.shift();
-        }
-
-        // HANDHELD TREMOR REJECTION & RESPONSIVE SPEED TUNING:
-        const isLocked = this.config.lockedBlobId === bestBlob.id;
-        const isPerson = bestBlob.category === 'person';
-        const minDisplacementForSpeed = isLocked
-          ? (isPerson ? 4 : 8)
-          : (this.config.isHandheld
-              ? (isPerson ? 6 : 18)
-              : (isPerson ? 4 : 8));
-
-        if (bestBlob.netDisplacementPx < minDisplacementForSpeed || isGlobalCameraShake) {
-          // Classified as stationary or hand tremor
-          bestBlob.isStationary = true;
-          bestBlob.currentSpeedKmh = 0;
-        } else {
-          bestBlob.isStationary = false;
-
-          // Compute instantaneous metric speed (responsive window: 0.06 - 0.25s)
-          const minHistoryLen = isPerson ? 2 : 3;
-          if (bestBlob.history.length >= minHistoryLen) {
-            const maxK = isPerson ? 4 : 6;
-            const k = Math.min(maxK, bestBlob.history.length - 1);
-            const past = bestBlob.history[bestBlob.history.length - 1 - k];
-            const curr = bestBlob.history[bestBlob.history.length - 1];
-
-            const dt = (curr.time - past.time) / 1000;
-            if (dt >= 0.025) {
-              const dx = curr.x - past.x;
-              const dy = curr.y - past.y;
-              const dPixels = Math.hypot(dx, dy);
-
-              const dMeters = dPixels / pixelsPerMeter;
-              const rawSpeedKmh = (dMeters / dt) * 3.6 * angleCorrectionFactor;
-
-              // Physical acceleration clamp (< 15 m/s^2)
-              const maxDelta = 15 * 3.6 * dt;
-              let clampedSpeed = rawSpeedKmh;
-              if (bestBlob.currentSpeedKmh > 0 && Math.abs(rawSpeedKmh - bestBlob.currentSpeedKmh) > maxDelta) {
-                clampedSpeed = rawSpeedKmh > bestBlob.currentSpeedKmh
-                  ? bestBlob.currentSpeedKmh + maxDelta
-                  : Math.max(0, bestBlob.currentSpeedKmh - maxDelta);
-              }
-
-              // Smooth speed with responsive EMA (0.60 for person, 0.35 for vehicle)
-              const emaWeight = isPerson ? 0.60 : 0.35;
-              bestBlob.currentSpeedKmh = Math.round(
-                bestBlob.currentSpeedKmh === 0
-                  ? clampedSpeed
-                  : emaWeight * clampedSpeed + (1 - emaWeight) * bestBlob.currentSpeedKmh
-              );
-
-              if (bestBlob.currentSpeedKmh > bestBlob.peakSpeedKmh) {
-                bestBlob.peakSpeedKmh = bestBlob.currentSpeedKmh;
-              }
-
-              bestBlob.speedSamples.push(bestBlob.currentSpeedKmh);
-              const sum = bestBlob.speedSamples.reduce((a, b) => a + b, 0);
-              bestBlob.avgSpeedKmh = Math.round(sum / bestBlob.speedSamples.length);
-              bestBlob.distanceTraveledPx += dPixels;
-
-              // STRICT OVERSPEED AUTO-SNAPSHOT LOGGING:
-              const minNetDisplacementToLog = isPerson ? 10 : 25; // px
-              const minHitsToLog = isPerson ? 5 : 8;
-              const limit = this.config.speedLimitKmh ?? 60;
-              const isOverSpeedLimit =
-                bestBlob.currentSpeedKmh > limit || bestBlob.peakSpeedKmh > limit;
-
-              const isTargetAllowedToLog =
-                this.config.lockedBlobId == null || bestBlob.id === this.config.lockedBlobId;
-
-              if (
-                this.config.autoCapture &&
-                isTargetAllowedToLog &&
-                isOverSpeedLimit &&
-                !bestBlob.hasBeenLogged &&
-                bestBlob.hits >= minHitsToLog &&
-                bestBlob.isAiConfirmed &&
-                !isGlobalCameraShake &&
-                bestBlob.netDisplacementPx >= minNetDisplacementToLog
-              ) {
-                bestBlob.hasBeenLogged = true;
-                newlyDetectedForLogging.push(bestBlob);
-              }
-            }
-          }
-        }
+        this.updateBlob(
+          bestBlob,
+          cand,
+          timestamp,
+          isFreshAiFrame,
+          srcW,
+          angleCorrectionFactor,
+          globalShakeRatio,
+          isGlobalCameraShake,
+          newlyDetectedForLogging
+        );
       } else {
         // Initialize new confirmed person / vehicle track
         const newId = this.nextTrackId++;
@@ -532,6 +479,8 @@ export class MotionTracker {
           score: cand.score,
           isStationary: true,
           isAiConfirmed: cand.isAi,
+          stationaryCount: 0,
+          lastSpeedUpdateTime: timestamp,
         };
 
         this.activeBlobs.set(newId, newBlob);
@@ -539,9 +488,12 @@ export class MotionTracker {
       }
     }
 
-    // Expire tracks not seen for > 450ms
+    // Expire tracks not seen:
+    // Locked track has 900ms grace period to handle occasional mobile AI latency
+    // Unlocked tracks expire after 450ms
     for (const [id, blob] of this.activeBlobs.entries()) {
-      if (timestamp - blob.lastSeen > 450) {
+      const maxAge = id === this.config.lockedBlobId ? 900 : 450;
+      if (timestamp - blob.lastSeen > maxAge) {
         this.activeBlobs.delete(id);
       }
     }
@@ -551,6 +503,195 @@ export class MotionTracker {
       newlyDetectedForLogging,
       isGlobalCameraShake,
     };
+  }
+
+  /**
+   * Updates an active track with candidate observation,
+   * calculating instantaneous metric speed with adaptive height perspective scaling
+   * and robust walking/stationary detection.
+   */
+  private updateBlob(
+    blob: MotionBlob,
+    cand: Candidate,
+    timestamp: number,
+    isFreshAiFrame: boolean,
+    srcW: number,
+    angleCorrectionFactor: number,
+    globalShakeRatio: number,
+    isGlobalCameraShake: boolean,
+    newlyDetectedForLogging: MotionBlob[]
+  ): void {
+    blob.bbox = cand.bbox;
+    blob.centroid = cand.centroid;
+    blob.lastSeen = timestamp;
+    blob.hits++;
+
+    // Update net translational displacement from initial anchor position
+    const netDx = cand.centroid.x - blob.anchorCentroid.x;
+    const netDy = cand.centroid.y - blob.anchorCentroid.y;
+    blob.netDisplacementPx = Math.hypot(netDx, netDy);
+
+    if (cand.isAi || !blob.isAiConfirmed) {
+      blob.class = cand.class;
+      blob.label = cand.label;
+      blob.icon = cand.icon;
+      blob.category = cand.category;
+      blob.score = cand.score;
+      if (cand.isAi) blob.isAiConfirmed = true;
+    }
+
+    const isLocked = this.config.lockedBlobId === blob.id;
+    const isPerson = blob.category === 'person';
+
+    // Check last recorded position in history
+    const lastHist = blob.history[blob.history.length - 1];
+    const distFromLastHist = lastHist
+      ? Math.hypot(cand.centroid.x - lastHist.x, cand.centroid.y - lastHist.y)
+      : 0;
+    const timeSinceLastHist = lastHist ? timestamp - lastHist.time : 999;
+
+    // Record to history ONLY when:
+    // 1) Fresh AI detection arrived, OR
+    // 2) Centroid moved noticeably (>= 0.6px), OR
+    // 3) At least 140ms has elapsed (so stationary state can be accurately sampled)
+    const shouldRecord = isFreshAiFrame || distFromLastHist >= 0.6 || timeSinceLastHist >= 140;
+
+    if (shouldRecord) {
+      blob.history.push({ x: cand.centroid.x, y: cand.centroid.y, time: timestamp });
+      if (blob.history.length > 35) {
+        blob.history.shift();
+      }
+    }
+
+    // Adaptive perspective scale:
+    // Standing/walking adult human is ~1.70m tall
+    // Standard passenger car is ~1.50m tall
+    const visibleWidthMeters = 1.28 * Math.max(1, this.config.distanceMeters);
+    let ppm = srcW / visibleWidthMeters;
+    if (isPerson && cand.bbox.h >= 30) {
+      ppm = cand.bbox.h / 1.70;
+    } else if (blob.category === 'vehicle' && cand.bbox.h >= 30) {
+      ppm = cand.bbox.h / 1.50;
+    }
+
+    // Find best historical reference point (~130ms to ~300ms ago)
+    let past: { x: number; y: number; time: number } | null = null;
+    for (let h = blob.history.length - 2; h >= 0; h--) {
+      const pt = blob.history[h];
+      const dtMs = timestamp - pt.time;
+      if (dtMs >= 130) {
+        past = pt;
+        if (dtMs >= 220) break;
+      }
+    }
+    // Fallback for newly spawned tracks with short history
+    if (!past && blob.history.length >= 2) {
+      const firstPt = blob.history[0];
+      if (timestamp - firstPt.time >= 60) {
+        past = firstPt;
+      }
+    }
+
+    if (past) {
+      const dt = (timestamp - past.time) / 1000;
+      if (dt >= 0.03) {
+        const dx = cand.centroid.x - past.x;
+        const dy = cand.centroid.y - past.y;
+        const dPixels = Math.hypot(dx, dy);
+
+        const dMeters = dPixels / ppm;
+        const rawSpeedKmh = (dMeters / dt) * 3.6 * angleCorrectionFactor;
+
+        // Camera shake suppression:
+        // Locked target: only extreme shake (> 0.72) pauses speed
+        // Unlocked target: suppressed by isGlobalCameraShake (> 0.48)
+        const shakeSuppressed = isLocked ? globalShakeRatio > 0.72 : isGlobalCameraShake;
+
+        // Movement thresholds:
+        // For locked person: displacement >= 1.8px OR rawSpeed >= 1.0 km/h
+        // For unlocked person: displacement >= 2.8px OR rawSpeed >= 1.4 km/h
+        // For vehicle: displacement >= 3.5px OR rawSpeed >= 2.0 km/h
+        const minDispThreshold = isLocked
+          ? (isPerson ? 1.8 : 3.2)
+          : (isPerson ? 2.8 : 4.2);
+        const minSpeedThreshold = isPerson ? 1.0 : 2.0;
+
+        const isActivelyMoving =
+          !shakeSuppressed && (dPixels >= minDispThreshold || rawSpeedKmh >= minSpeedThreshold);
+
+        if (isActivelyMoving) {
+          blob.stationaryCount = 0;
+          blob.isStationary = false;
+
+          // Physical acceleration clamp (< 8 m/s^2 for person, < 15 m/s^2 for vehicle)
+          const maxAccelMps2 = isPerson ? 8 : 15;
+          const maxDelta = maxAccelMps2 * 3.6 * dt;
+          let clampedSpeed = rawSpeedKmh;
+          if (blob.currentSpeedKmh > 0 && Math.abs(rawSpeedKmh - blob.currentSpeedKmh) > maxDelta) {
+            clampedSpeed = rawSpeedKmh > blob.currentSpeedKmh
+              ? blob.currentSpeedKmh + maxDelta
+              : Math.max(0, blob.currentSpeedKmh - maxDelta);
+          }
+
+          // Responsive EMA (0.65 for person, 0.40 for vehicle)
+          const emaWeight = isPerson ? 0.65 : 0.40;
+          const nextSpeed = blob.currentSpeedKmh === 0
+            ? clampedSpeed
+            : emaWeight * clampedSpeed + (1 - emaWeight) * blob.currentSpeedKmh;
+
+          // Pedestrian walking speeds under 10 km/h show 1 decimal place (e.g. 3.4 km/h)
+          // Vehicles or fast speeds round to whole integer
+          blob.currentSpeedKmh = nextSpeed < 10
+            ? Math.round(nextSpeed * 10) / 10
+            : Math.round(nextSpeed);
+
+          if (blob.currentSpeedKmh > blob.peakSpeedKmh) {
+            blob.peakSpeedKmh = blob.currentSpeedKmh;
+          }
+
+          blob.speedSamples.push(blob.currentSpeedKmh);
+          const sum = blob.speedSamples.reduce((a, b) => a + b, 0);
+          blob.avgSpeedKmh = Math.round((sum / blob.speedSamples.length) * 10) / 10;
+          blob.distanceTraveledPx += dPixels;
+          blob.lastSpeedUpdateTime = timestamp;
+
+          // STRICT OVERSPEED AUTO-SNAPSHOT LOGGING:
+          const minHitsToLog = isPerson ? 4 : 7;
+          const limit = this.config.speedLimitKmh ?? 60;
+          const isOverSpeedLimit =
+            blob.currentSpeedKmh > limit || blob.peakSpeedKmh > limit;
+          const isTargetAllowedToLog =
+            this.config.lockedBlobId == null || blob.id === this.config.lockedBlobId;
+
+          if (
+            this.config.autoCapture &&
+            isTargetAllowedToLog &&
+            isOverSpeedLimit &&
+            !blob.hasBeenLogged &&
+            blob.hits >= minHitsToLog &&
+            blob.isAiConfirmed &&
+            !isGlobalCameraShake &&
+            blob.distanceTraveledPx >= (isPerson ? 12 : 25)
+          ) {
+            blob.hasBeenLogged = true;
+            newlyDetectedForLogging.push(blob);
+          }
+        } else {
+          // Centroid displacement is too small -> Target is stopping or stationary
+          blob.stationaryCount = (blob.stationaryCount || 0) + 1;
+
+          // Smoothly decay speed rather than abruptly zeroing
+          if (blob.stationaryCount >= 2) {
+            blob.currentSpeedKmh = Math.round(blob.currentSpeedKmh * 0.45 * 10) / 10;
+          }
+          if (blob.stationaryCount >= 4 || blob.currentSpeedKmh < 0.8) {
+            blob.currentSpeedKmh = 0;
+            blob.isStationary = true;
+            blob.anchorCentroid = { x: cand.centroid.x, y: cand.centroid.y };
+          }
+        }
+      }
+    }
   }
 
   /**
