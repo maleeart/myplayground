@@ -26,8 +26,6 @@ import {
   ClipboardList,
   Volume2,
   VolumeX,
-  Lock,
-  Unlock,
   Activity,
   Zap,
   HelpCircle,
@@ -84,11 +82,10 @@ export const CameraView: React.FC = () => {
   const [simAutoSpawn, setSimAutoSpawn] = useState<boolean>(true);
 
   // Settings & Controls
-  const [distanceMeters, setDistanceMeters] = useState<number>(15);
+  const distanceMeters = 15; // Calibrated 15m street distance
   const [sensitivity, setSensitivity] = useState<'low' | 'medium' | 'high'>('medium');
   const [speedLimitKmh, setSpeedLimitKmh] = useState<number>(60);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [isFocusLocked, setIsFocusLocked] = useState<boolean>(false);
   const [toastNote, setToastNote] = useState<string | null>(null);
 
   // Interactive Target Selection & Single-Object Lock-On Focus
@@ -145,6 +142,7 @@ export const CameraView: React.FC = () => {
     motionTrackerRef.current.config.isHandheld = isHandheld;
     motionTrackerRef.current.config.autoCapture = autoCapture;
     motionTrackerRef.current.config.lockedBlobId = lockedTargetId;
+    motionTrackerRef.current.config.speedLimitKmh = speedLimitKmh;
     detectorRef.current.setFilterMode(targetFilter);
 
     // Dynamic noise thresholds
@@ -160,7 +158,7 @@ export const CameraView: React.FC = () => {
     }
 
     audioAlert.enabled = soundEnabled;
-  }, [distanceMeters, sensitivity, soundEnabled, targetFilter, isHandheld, autoCapture]);
+  }, [distanceMeters, sensitivity, soundEnabled, targetFilter, isHandheld, autoCapture, lockedTargetId, speedLimitKmh]);
 
   /**
    * Capture cropped snapshot of confirmed human or vehicle
@@ -291,55 +289,7 @@ export const CameraView: React.FC = () => {
     };
   }, [startCamera]);
 
-  /**
-   * Toggle Focus Lock on camera
-   */
-  const handleToggleFocusLock = useCallback(async () => {
-    const track = activeTrackRef.current;
-    if (!track) {
-      setToastNote('⚠️ กรุณารอกล้องพร้อมใช้งาน');
-      setTimeout(() => setToastNote(null), 2500);
-      return;
-    }
 
-    const nextState = !isFocusLocked;
-    try {
-      const caps = (track as any).getCapabilities?.() || {};
-      const advanced: any = {};
-
-      if (nextState) {
-        if (caps.focusMode) {
-          advanced.focusMode = caps.focusMode.includes('single-shot')
-            ? 'single-shot'
-            : caps.focusMode.includes('manual')
-            ? 'manual'
-            : 'continuous';
-        }
-        if (caps.exposureMode && caps.exposureMode.includes('manual')) {
-          advanced.exposureMode = 'manual';
-        }
-        if (Object.keys(advanced).length > 0) {
-          await track.applyConstraints({ advanced: [advanced] } as any);
-        }
-        setIsFocusLocked(true);
-        setToastNote('🔒 ล็อกโฟกัสคงที่แล้ว');
-      } else {
-        if (caps.focusMode && caps.focusMode.includes('continuous')) {
-          advanced.focusMode = 'continuous';
-        }
-        if (Object.keys(advanced).length > 0) {
-          await track.applyConstraints({ advanced: [advanced] } as any);
-        }
-        setIsFocusLocked(false);
-        setToastNote('🎯 ปลดล็อกสู่ออโต้โฟกัส');
-      }
-      setTimeout(() => setToastNote(null), 3000);
-    } catch {
-      setIsFocusLocked(nextState);
-      setToastNote(nextState ? '🔒 ล็อกโฟกัสแล้ว' : '🎯 ปลดล็อกโฟกัส');
-      setTimeout(() => setToastNote(null), 3000);
-    }
-  }, [isFocusLocked]);
 
   /**
    * Tap on Canvas: Target Selection / Lock-On Focus
@@ -517,10 +467,12 @@ export const CameraView: React.FC = () => {
         // 3. Handle Auto-Snapshot & Logging for confirmed moving targets
         if (newlyDetectedForLogging.length > 0) {
           for (const blob of newlyDetectedForLogging) {
+            const isOver = blob.peakSpeedKmh > speedLimitKmh || blob.currentSpeedKmh > speedLimitKmh;
+            if (!isOver) continue; // STRICT: Auto-capture ONLY when exceeding speed limit!
+
             const snapUrl = captureSnapshot(inputSource, blob.bbox);
             const now = new Date();
             const timeStr = now.toTimeString().split(' ')[0];
-            const isOver = blob.peakSpeedKmh > speedLimitKmh;
 
             const newRecord: DetectionRecord = {
               id: `${blob.id}-${Date.now()}`,
@@ -951,26 +903,52 @@ export const CameraView: React.FC = () => {
 
             {/* Right: Controls & Presets */}
             <div className="flex items-center gap-1.5 shrink-0">
-              {/* Distance Presets */}
-              <div className="flex items-center bg-slate-900 rounded-xl p-0.5 border border-slate-800 text-[11px]">
-                <span className="px-1.5 text-slate-400 text-[10px]">ระยะ:</span>
-                {[5, 10, 15, 25, 40].map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => setDistanceMeters(d)}
-                    className={`px-1.5 sm:px-2 py-0.5 rounded-lg font-bold transition ${
-                      distanceMeters === d
-                        ? 'bg-sky-500 text-white shadow'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                    title={`ตั้งระยะห่างจากกล้อง ${d} เมตร`}
-                  >
-                    {d}m
-                  </button>
-                ))}
+              {/* Custom Speed Limit Input & Stepper */}
+              <div className="flex items-center bg-slate-900 rounded-xl px-1.5 py-0.5 border border-rose-500/50 text-xs">
+                <span className="text-[11px] font-bold text-rose-400 mr-1 flex items-center gap-0.5">
+                  <span>🚨</span>
+                  <span className="hidden xs:inline">ลิมิต:</span>
+                </span>
+                <button
+                  onClick={() => {
+                    const next = Math.max(10, speedLimitKmh - 5);
+                    setSpeedLimitKmh(next);
+                    setToastNote(`🚨 ปรับลิมิตความเร็ว: ${next} km/h`);
+                    setTimeout(() => setToastNote(null), 1500);
+                  }}
+                  className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 transition"
+                  title="ลดความเร็วลิมิต 5 km/h"
+                >
+                  -
+                </button>
+                <input
+                  type="number"
+                  value={speedLimitKmh}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (!isNaN(val) && val >= 5 && val <= 300) {
+                      setSpeedLimitKmh(val);
+                    }
+                  }}
+                  className="w-10 bg-transparent text-center font-mono font-bold text-white text-xs focus:outline-none focus:bg-slate-800 rounded px-0.5 py-0.5"
+                  title="พิมพ์ตั้งค่าความเร็วลิมิตที่ต้องการ (km/h)"
+                />
+                <button
+                  onClick={() => {
+                    const next = Math.min(250, speedLimitKmh + 5);
+                    setSpeedLimitKmh(next);
+                    setToastNote(`🚨 ปรับลิมิตความเร็ว: ${next} km/h`);
+                    setTimeout(() => setToastNote(null), 1500);
+                  }}
+                  className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 transition"
+                  title="เพิ่มความเร็วลิมิต 5 km/h"
+                >
+                  +
+                </button>
+                <span className="text-[10px] text-slate-400 ml-0.5">km/h</span>
               </div>
 
-              {/* Auto-Capture Toggle */}
+              {/* Auto-Capture Toggle (Strictly Over Speed Limit) */}
               <button
                 onClick={() => {
                   const next = !autoCapture;
@@ -978,19 +956,19 @@ export const CameraView: React.FC = () => {
                   motionTrackerRef.current.config.autoCapture = next;
                   setToastNote(
                     next
-                      ? '📸 เปิดถ่ายภาพอัตโนมัติ (เฉพาะรถ/คนวิ่งผ่านจริง)'
-                      : '⏸️ ปิดถ่ายภาพอัตโนมัติ (ดูความเร็วสดอย่างเดียว ไม่แคปมั่ว)'
+                      ? `📸 เปิดออโต้แคป: บันทึกเฉพาะตอนเกินลิมิต (${speedLimitKmh} km/h)`
+                      : '⏸️ ปิดออโต้แคป (ดูความเร็วสดอย่างเดียว)'
                   );
                   setTimeout(() => setToastNote(null), 2500);
                 }}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold border transition ${
                   autoCapture
-                    ? 'bg-sky-600/30 border-sky-500 text-sky-200'
+                    ? 'bg-rose-600/25 border-rose-500 text-rose-200 shadow'
                     : 'bg-slate-800 border-slate-700 text-slate-400'
                 }`}
-                title={autoCapture ? 'ถ่ายภาพอัตโนมัติ: เปิด' : 'ถ่ายภาพอัตโนมัติ: ปิด'}
+                title={autoCapture ? `แคปอัตโนมัติ: เฉพาะเมื่อเกิน ${speedLimitKmh} km/h` : 'ปิดแคปอัตโนมัติ'}
               >
-                <span>{autoCapture ? '📸 ออโต้แคป' : '⏸️ ปิดแคป'}</span>
+                <span>{autoCapture ? '📸 แคปเฉพาะเกินลิมิต' : '⏸️ ปิดแคป'}</span>
               </button>
 
               {/* Anti-Noise Sensitivity */}
@@ -1018,21 +996,6 @@ export const CameraView: React.FC = () => {
                 ))}
               </div>
 
-              {/* Speed Limit Cycler */}
-              <button
-                onClick={() => {
-                  const limits = [30, 50, 60, 80, 100];
-                  const next = limits[(limits.indexOf(speedLimitKmh) + 1) % limits.length];
-                  setSpeedLimitKmh(next);
-                  setToastNote(`🚨 ความเร็วเตือนเกินกำหนด: ${next} km/h`);
-                  setTimeout(() => setToastNote(null), 2000);
-                }}
-                className="px-2 py-1 rounded-xl text-xs font-bold border border-rose-500/40 bg-rose-500/15 text-rose-300 transition hover:bg-rose-500/25"
-                title="แตะเพื่อเปลี่ยนระดับความเร็วเตือนเกินกำหนด"
-              >
-                🚨 {speedLimitKmh} km/h
-              </button>
-
               {/* Motion Mask Toggle */}
               <button
                 onClick={() => {
@@ -1051,25 +1014,6 @@ export const CameraView: React.FC = () => {
                 <Activity className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="hidden md:inline">ดูพิกเซลขยับ</span>
               </button>
-
-              {/* Focus Lock */}
-              {sourceMode === 'camera' && (
-                <button
-                  onClick={handleToggleFocusLock}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-xl text-xs font-semibold border transition ${
-                    isFocusLocked
-                      ? 'bg-emerald-500/25 border-emerald-500 text-emerald-300'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                  }`}
-                  title={isFocusLocked ? 'โฟกัสคงที่แล้ว' : 'แตะเพื่อล็อกโฟกัส'}
-                >
-                  {isFocusLocked ? (
-                    <Lock className="w-3.5 h-3.5 text-emerald-400" />
-                  ) : (
-                    <Unlock className="w-3.5 h-3.5 text-amber-400" />
-                  )}
-                </button>
-              )}
 
               {/* Principle & Help Modal Button */}
               <button
@@ -1347,11 +1291,12 @@ export const CameraView: React.FC = () => {
 
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <h4 className="font-bold text-sky-400 mb-1 flex items-center gap-1.5">
-                  <span>2. การควบคุมการถ่ายภาพอัตโนมัติ (Auto-Capture)</span>
+                  <span>2. แคปภาพอัตโนมัติเฉพาะตอน "เกินลิมิตความเร็ว"</span>
                 </h4>
                 <p>
-                  • สามารถกดปุ่ม <strong>"📸 ออโต้แคป"</strong> บนแถบด้านบนเพื่อ <strong>ปิดการถ่ายภาพอัตโนมัติ</strong> ได้ทุกเมื่อ หากต้องการเพียงดูความเร็วบนหน้าจอสดโดยไม่ให้ภาพล้นประวัติ
-                  <br />• สามารถกดปุ่ม <strong>"📸 แคปภาพ"</strong> ด้านขวาล่างเพื่อกดบันทึกภาพเป้าหมายด้วยตนเองได้ทันที
+                  • <strong>ไม่แคปรถที่ขับความเร็วปกติ:</strong> ระบบจะแคปภาพออโต้เฉพาะเป้าหมายที่ความเร็วเกินลิมิตที่คุณตั้งไว้เท่านั้น (เช่น ตั้งไว้ 60 km/h หากรถวิ่ง 50 km/h จะไม่บันทึก)
+                  <br />• <strong>ปรับลิมิตความเร็วได้เอง:</strong> สามารถกดปุ่ม <strong>[ - ]</strong> หรือ <strong>[ + ]</strong> หรือแตะพิมพ์ตัวเลขความเร็วลิมิตที่ต้องการได้โดยตรงบนแถบด้านบน
+                  <br />• <strong>ปุ่มแคปภาพแมนนวล:</strong> หากต้องการบันทึกภาพรถที่ความเร็วปกติ สามารถกดปุ่ม <strong>"📸 แคปภาพ"</strong> มุมขวาล่างได้ตลอดเวลา
                 </p>
               </div>
 
@@ -1361,9 +1306,10 @@ export const CameraView: React.FC = () => {
                 </h4>
                 <p>
                   ระบบจะแคปภาพอัตโนมัติเฉพาะเมื่อ:
-                  <br />1) ได้รับการยืนยันจาก AI ว่าเป็นคนหรือรถจริง
-                  <br />2) เคลื่อนไหวต่อเนื่องอย่างน้อย 12 เฟรม (~0.3 วินาที)
-                  <br />3) ความเร็วรถตั้งแต่ 15 km/h ขึ้นไป หรือ คนเดินตั้งแต่ 3.5 km/h ขึ้นไป (รถจอดนิ่งหรือมือขยับจะไม่แคป)
+                  <br />1) ความเร็วเกินลิมิตที่กำหนดไว้ (Overspeed)
+                  <br />2) วัตถุตรงกับเป้าหมายที่กำลังล็อกโฟกัสอยู่
+                  <br />3) เคลื่อนไหวต่อเนื่องอย่างน้อย 10 เฟรม (~0.25 วินาที)
+                  <br />4) กล้องต้องไม่ส่ายหรือสะบัด
                 </p>
               </div>
 

@@ -50,6 +50,7 @@ export interface MotionTrackerConfig {
   isHandheld: boolean; // True: Handheld anti-shake mode (strict AI)
   autoCapture: boolean; // True: Automatic photo snapshot on confirmed movement
   lockedBlobId?: number | null; // Null: all, Number: lock-on to specific target only
+  speedLimitKmh?: number; // Speed limit for overspeed auto-capture
 }
 
 export class MotionTracker {
@@ -93,6 +94,7 @@ export class MotionTracker {
       isHandheld: true, // Default to true for smartphone handheld use
       autoCapture: true,
       lockedBlobId: null,
+      speedLimitKmh: 60,
       ...config,
     };
 
@@ -475,14 +477,19 @@ export class MotionTracker {
               // 1. autoCapture must be enabled
               // 2. Not previously logged
               // 3. Tracked continuously for >= 12 frames (~0.3s)
-              // 4. Must be AI confirmed
-              // 5. Must NOT be shaking camera
-              // 6. Must have moved >= 35 pixels net displacement
-              // 7. Must meet real speed thresholds:
-              //    - Vehicle >= 12 km/h (rejects parked cars swaying in view)
-              //    - Person >= 3.5 km/h (real walking speed)
-              const minSpeedToLog = bestBlob.category === 'person' ? 3.5 : 12;
+              // STRICT OVERSPEED AUTO-SNAPSHOT LOGGING:
+              // 1. autoCapture must be enabled
+              // 2. Target must match locked target (if one is locked)
+              // 3. Must EXCEED speed limit (currentSpeedKmh > speedLimit or peakSpeedKmh > speedLimit)
+              // 4. Not previously logged
+              // 5. Tracked continuously for >= 10 frames (~0.25s)
+              // 6. Must be AI confirmed
+              // 7. Must NOT be shaking camera
+              // 8. Must have moved >= 35 pixels net displacement
               const minNetDisplacementToLog = 35; // px
+              const limit = this.config.speedLimitKmh ?? 60;
+              const isOverSpeedLimit =
+                bestBlob.currentSpeedKmh > limit || bestBlob.peakSpeedKmh > limit;
 
               const isTargetAllowedToLog =
                 this.config.lockedBlobId == null || bestBlob.id === this.config.lockedBlobId;
@@ -490,12 +497,12 @@ export class MotionTracker {
               if (
                 this.config.autoCapture &&
                 isTargetAllowedToLog &&
+                isOverSpeedLimit &&
                 !bestBlob.hasBeenLogged &&
-                bestBlob.hits >= 12 &&
+                bestBlob.hits >= 10 &&
                 bestBlob.isAiConfirmed &&
                 !isGlobalCameraShake &&
-                bestBlob.netDisplacementPx >= minNetDisplacementToLog &&
-                bestBlob.currentSpeedKmh >= minSpeedToLog
+                bestBlob.netDisplacementPx >= minNetDisplacementToLog
               ) {
                 bestBlob.hasBeenLogged = true;
                 newlyDetectedForLogging.push(bestBlob);
