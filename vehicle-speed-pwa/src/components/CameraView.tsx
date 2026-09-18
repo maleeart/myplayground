@@ -903,49 +903,28 @@ export const CameraView: React.FC = () => {
 
             {/* Right: Controls & Presets */}
             <div className="flex items-center gap-1.5 shrink-0">
-              {/* Custom Speed Limit Input & Stepper */}
-              <div className="flex items-center bg-slate-900 rounded-xl px-1.5 py-0.5 border border-rose-500/50 text-xs">
-                <span className="text-[11px] font-bold text-rose-400 mr-1 flex items-center gap-0.5">
-                  <span>🚨</span>
-                  <span className="hidden xs:inline">ลิมิต:</span>
+              {/* Custom Speed Limit Slide Bar */}
+              <div className="flex items-center gap-2 bg-slate-900 rounded-xl px-2.5 py-1 border border-rose-500/50 shadow-md">
+                <span className="text-[11px] font-bold text-rose-400 shrink-0 flex items-center gap-1">
+                  <span>🚨 ลิมิต:</span>
+                  <span className="font-mono text-white text-xs font-black min-w-[24px]">
+                    {speedLimitKmh}
+                  </span>
+                  <span className="text-[10px] text-slate-400">km/h</span>
                 </span>
-                <button
-                  onClick={() => {
-                    const next = Math.max(10, speedLimitKmh - 5);
-                    setSpeedLimitKmh(next);
-                    setToastNote(`🚨 ปรับลิมิตความเร็ว: ${next} km/h`);
-                    setTimeout(() => setToastNote(null), 1500);
-                  }}
-                  className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 transition"
-                  title="ลดความเร็วลิมิต 5 km/h"
-                >
-                  -
-                </button>
                 <input
-                  type="number"
+                  type="range"
+                  min="20"
+                  max="140"
+                  step="5"
                   value={speedLimitKmh}
                   onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val) && val >= 5 && val <= 300) {
-                      setSpeedLimitKmh(val);
-                    }
+                    const val = Number(e.target.value);
+                    setSpeedLimitKmh(val);
                   }}
-                  className="w-10 bg-transparent text-center font-mono font-bold text-white text-xs focus:outline-none focus:bg-slate-800 rounded px-0.5 py-0.5"
-                  title="พิมพ์ตั้งค่าความเร็วลิมิตที่ต้องการ (km/h)"
+                  className="w-20 sm:w-28 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-rose-500"
+                  title={`ลากแถบสไลด์เพื่อปรับลิมิตความเร็ว: ${speedLimitKmh} km/h`}
                 />
-                <button
-                  onClick={() => {
-                    const next = Math.min(250, speedLimitKmh + 5);
-                    setSpeedLimitKmh(next);
-                    setToastNote(`🚨 ปรับลิมิตความเร็ว: ${next} km/h`);
-                    setTimeout(() => setToastNote(null), 1500);
-                  }}
-                  className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center justify-center text-xs active:scale-95 transition"
-                  title="เพิ่มความเร็วลิมิต 5 km/h"
-                >
-                  +
-                </button>
-                <span className="text-[10px] text-slate-400 ml-0.5">km/h</span>
               </div>
 
               {/* Auto-Capture Toggle (Strictly Over Speed Limit) */}
