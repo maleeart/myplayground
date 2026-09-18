@@ -49,6 +49,7 @@ export interface MotionTrackerConfig {
   filterMode: TargetFilterMode; // 'all' | 'vehicles' | 'people'
   isHandheld: boolean; // True: Handheld anti-shake mode (strict AI)
   autoCapture: boolean; // True: Automatic photo snapshot on confirmed movement
+  lockedBlobId?: number | null; // Null: all, Number: lock-on to specific target only
 }
 
 export class MotionTracker {
@@ -91,6 +92,7 @@ export class MotionTracker {
       filterMode: 'all',
       isHandheld: true, // Default to true for smartphone handheld use
       autoCapture: true,
+      lockedBlobId: null,
       ...config,
     };
 
@@ -482,8 +484,12 @@ export class MotionTracker {
               const minSpeedToLog = bestBlob.category === 'person' ? 3.5 : 12;
               const minNetDisplacementToLog = 35; // px
 
+              const isTargetAllowedToLog =
+                this.config.lockedBlobId == null || bestBlob.id === this.config.lockedBlobId;
+
               if (
                 this.config.autoCapture &&
+                isTargetAllowedToLog &&
                 !bestBlob.hasBeenLogged &&
                 bestBlob.hits >= 12 &&
                 bestBlob.isAiConfirmed &&

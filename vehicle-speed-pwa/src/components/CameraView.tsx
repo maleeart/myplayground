@@ -91,11 +91,18 @@ export const CameraView: React.FC = () => {
   const [isFocusLocked, setIsFocusLocked] = useState<boolean>(false);
   const [toastNote, setToastNote] = useState<string | null>(null);
 
+  // Interactive Target Selection & Single-Object Lock-On Focus
+  const [lockedTargetId, setLockedTargetId] = useState<number | null>(null);
+  const lockedTargetIdRef = useRef<number | null>(null);
+  lockedTargetIdRef.current = lockedTargetId;
+  const lastSeenLockedTimeRef = useRef<number>(Date.now());
+
   // UI Drawers & State
   const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [fps, setFps] = useState<number>(0);
   const [activeBlobs, setActiveBlobs] = useState<MotionBlob[]>([]);
+  const lockedBlob = lockedTargetId !== null ? activeBlobs.find((b) => b.id === lockedTargetId) : null;
 
   // Detection History records
   const [records, setRecords] = useState<DetectionRecord[]>(() => {
@@ -137,6 +144,7 @@ export const CameraView: React.FC = () => {
     motionTrackerRef.current.config.filterMode = targetFilter;
     motionTrackerRef.current.config.isHandheld = isHandheld;
     motionTrackerRef.current.config.autoCapture = autoCapture;
+    motionTrackerRef.current.config.lockedBlobId = lockedTargetId;
     detectorRef.current.setFilterMode(targetFilter);
 
     // Dynamic noise thresholds
@@ -195,7 +203,9 @@ export const CameraView: React.FC = () => {
       setTimeout(() => setToastNote(null), 2000);
       return;
     }
-    const target = activeBlobs[0];
+    const target =
+      (lockedTargetId !== null ? activeBlobs.find((b) => b.id === lockedTargetId) : null) ||
+      activeBlobs[0];
     const snapUrl = captureSnapshot(canvas, target.bbox);
     const now = new Date();
     const timeStr = now.toTimeString().split(' ')[0];
@@ -223,10 +233,15 @@ export const CameraView: React.FC = () => {
       return updated;
     });
 
-    audioAlert.playDetectBlip();
-    setToastNote(`📸 แคปภาพ ${target.label} #${target.id} สำเร็จ`);
-    setTimeout(() => setToastNote(null), 2000);
-  }, [activeBlobs, distanceMeters, speedLimitKmh]);
+    if (isOver) {
+      audioAlert.playOverspeedAlarm();
+    } else {
+      audioAlert.playDetectBlip();
+    }
+
+    setToastNote(`📸 บันทึกภาพ ${target.label} #${target.id} เรียบร้อย`);
+    setTimeout(() => setToastNote(null), 2500);
+  }, [activeBlobs, distanceMeters, speedLimitKmh, lockedTargetId]);
 
   /**
    * Start rear camera stream
@@ -327,31 +342,69 @@ export const CameraView: React.FC = () => {
   }, [isFocusLocked]);
 
   /**
-   * Tap-to-Focus on camera canvas
+   * Tap on Canvas: Target Selection / Lock-On Focus
    */
   const handleCanvasClick = useCallback(async (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const track = activeTrackRef.current;
-    if (!track) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const clickX = (e.clientX - rect.left) * scaleX;
+    const clickY = (e.clientY - rect.top) * scaleY;
 
-    try {
-      const caps = (track as any).getCapabilities?.() || {};
-      if (caps.pointsOfInterest) {
-        await track.applyConstraints({
-          advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }],
-        } as any);
-        setToastNote('🎯 ปรับจุดโฟกัสไปที่ตำแหน่งที่แตะแล้ว');
-        setTimeout(() => setToastNote(null), 2000);
+    // Find if user tapped near any detected blob
+    let foundBlob: MotionBlob | null = null;
+    let minDistance = Infinity;
+
+    for (const blob of activeBlobs) {
+      const pad = 45; // generous finger touch buffer
+      const inBox =
+        clickX >= blob.bbox.x - pad &&
+        clickX <= blob.bbox.x + blob.bbox.w + pad &&
+        clickY >= blob.bbox.y - pad &&
+        clickY <= blob.bbox.y + blob.bbox.h + pad;
+
+      const dist = Math.hypot(clickX - blob.centroid.x, clickY - blob.centroid.y);
+
+      if (inBox || dist < 100) {
+        if (dist < minDistance) {
+          minDistance = dist;
+          foundBlob = blob;
+        }
       }
-    } catch {
-      // ignore
     }
-  }, []);
+
+    if (foundBlob) {
+      setLockedTargetId(foundBlob.id);
+      audioAlert.playDetectBlip();
+      setToastNote(`🎯 ล็อกเป้าหมาย: ${foundBlob.label} #${foundBlob.id} เรียบร้อย`);
+      setTimeout(() => setToastNote(null), 2500);
+    } else if (lockedTargetId !== null) {
+      // Tapped empty space: unlock target
+      setLockedTargetId(null);
+      setToastNote('🔓 ปลดล็อกเป้าหมายแล้ว - แตะเลือกเป้าใหม่');
+      setTimeout(() => setToastNote(null), 2000);
+    }
+
+    // Hardware camera point-of-interest focus (if supported by phone)
+    const track = activeTrackRef.current;
+    if (track) {
+      const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      try {
+        const caps = (track as any).getCapabilities?.() || {};
+        if (caps.pointsOfInterest) {
+          await track.applyConstraints({
+            advanced: [{ pointsOfInterest: [{ x: normX, y: normY }] }],
+          } as any);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, [activeBlobs, lockedTargetId]);
 
   /**
    * Main Render and Motion Tracking Loop (Full 60 FPS)
@@ -440,6 +493,18 @@ export const CameraView: React.FC = () => {
         setActiveBlobs(blobs);
         setIsCameraShaking(isGlobalCameraShake);
 
+        // Track locked target lifetime
+        if (lockedTargetIdRef.current !== null) {
+          const lockedBlob = blobs.find((b) => b.id === lockedTargetIdRef.current);
+          if (lockedBlob) {
+            lastSeenLockedTimeRef.current = timestamp;
+          } else if (timestamp - lastSeenLockedTimeRef.current > 1500) {
+            setLockedTargetId(null);
+            setToastNote('🏁 วัตถุหลุดออกจากเฟรมแล้ว - แตะเลือกเป้าใหม่');
+            setTimeout(() => setToastNote(null), 2500);
+          }
+        }
+
         // 2. Draw Motion Mask if enabled
         if (showMask) {
           const maskCanvas = motionTrackerRef.current.getMaskCanvas();
@@ -505,42 +570,129 @@ export const CameraView: React.FC = () => {
 
   /**
    * Draw glowing corner brackets and target classification badge
+   * Supports: Single-Target Lock-On Focus vs. Multi-Target Tap-to-Select
    */
   const drawMotionOverlays = (ctx: CanvasRenderingContext2D, blobs: MotionBlob[]) => {
-    for (const blob of blobs) {
-      const { bbox, centroid, history, currentSpeedKmh, isStationary } = blob;
-      const isOver = currentSpeedKmh > speedLimitKmh;
-      const isMoving = currentSpeedKmh > 2 && !isStationary;
+    const currentLockedId = lockedTargetIdRef.current;
 
-      const themeColor = isOver
-        ? '#ef4444' // Red (Overspeed)
-        : blob.category === 'person'
-        ? '#10b981' // Green (Person)
-        : isMoving
-        ? '#38bdf8' // Cyan (Moving Vehicle)
-        : '#f59e0b'; // Amber (Stationary / Hand tremor)
+    // SCENARIO 1: A target is locked -> Exclusively focus on this single target
+    if (currentLockedId !== null) {
+      const lockedBlob = blobs.find((b) => b.id === currentLockedId);
+      if (lockedBlob) {
+        const { bbox, centroid, history, currentSpeedKmh, isStationary } = lockedBlob;
+        const isOver = currentSpeedKmh > speedLimitKmh;
+        const isMoving = currentSpeedKmh > 2 && !isStationary;
 
-      // 1. Trajectory Trail
-      if (history.length > 1 && isMoving) {
-        ctx.beginPath();
-        for (let i = 0; i < history.length; i++) {
-          const pt = history[i];
-          if (i === 0) {
-            ctx.moveTo(pt.x, pt.y);
-          } else {
-            ctx.lineTo(pt.x, pt.y);
+        const themeColor = isOver
+          ? '#ef4444' // Red (Overspeed)
+          : lockedBlob.category === 'person'
+          ? '#10b981' // Green (Person)
+          : '#38bdf8'; // Cyan (Moving Vehicle)
+
+        // 1. Trajectory Trail
+        if (history.length > 1 && isMoving) {
+          ctx.beginPath();
+          for (let i = 0; i < history.length; i++) {
+            const pt = history[i];
+            if (i === 0) ctx.moveTo(pt.x, pt.y);
+            else ctx.lineTo(pt.x, pt.y);
           }
+          ctx.strokeStyle = themeColor;
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'round';
+          ctx.stroke();
         }
-        ctx.strokeStyle = themeColor;
-        ctx.lineWidth = 2.5;
-        ctx.lineCap = 'round';
-        ctx.stroke();
-      }
 
-      // 2. High-Tech Corner Brackets
-      const cornerLen = Math.min(bbox.w, bbox.h) * 0.28;
-      ctx.strokeStyle = themeColor;
-      ctx.lineWidth = 3;
+        // 2. High-Tech Tactical Lock Corner Brackets (Thicker & bolder)
+        const cornerLen = Math.min(bbox.w, bbox.h) * 0.35;
+        ctx.strokeStyle = themeColor;
+        ctx.lineWidth = 3.5;
+
+        // Top-Left
+        ctx.beginPath();
+        ctx.moveTo(bbox.x, bbox.y + cornerLen);
+        ctx.lineTo(bbox.x, bbox.y);
+        ctx.lineTo(bbox.x + cornerLen, bbox.y);
+        ctx.stroke();
+
+        // Top-Right
+        ctx.beginPath();
+        ctx.moveTo(bbox.x + bbox.w - cornerLen, bbox.y);
+        ctx.lineTo(bbox.x + bbox.w, bbox.y);
+        ctx.lineTo(bbox.x + bbox.w, bbox.y + cornerLen);
+        ctx.stroke();
+
+        // Bottom-Right
+        ctx.beginPath();
+        ctx.moveTo(bbox.x + bbox.w, bbox.y + bbox.h - cornerLen);
+        ctx.lineTo(bbox.x + bbox.w, bbox.y + bbox.h);
+        ctx.lineTo(bbox.x + bbox.w - cornerLen, bbox.y + bbox.h);
+        ctx.stroke();
+
+        // Bottom-Left
+        ctx.beginPath();
+        ctx.moveTo(bbox.x + cornerLen, bbox.y + bbox.h);
+        ctx.lineTo(bbox.x, bbox.y + bbox.h);
+        ctx.lineTo(bbox.x, bbox.y + bbox.h - cornerLen);
+        ctx.stroke();
+
+        // 3. Central Tactical Target Reticle (Pulsing / dashed lock ring)
+        ctx.save();
+        ctx.strokeStyle = themeColor;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(centroid.x, centroid.y, 22, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.fillStyle = themeColor;
+        ctx.beginPath();
+        ctx.arc(centroid.x, centroid.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 4. Prominent Focus Badge
+        const badgeW = 165;
+        const badgeH = 34;
+        const badgeX = bbox.x + bbox.w / 2 - badgeW / 2;
+        const badgeY = Math.max(10, bbox.y - badgeH - 10);
+
+        ctx.fillStyle = isOver ? 'rgba(239, 68, 68, 0.94)' : 'rgba(15, 23, 42, 0.92)';
+        ctx.beginPath();
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, [8]);
+        ctx.fill();
+        ctx.strokeStyle = isOver ? '#fca5a5' : themeColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Target Label
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(`🎯 ล็อก: ${lockedBlob.icon} ${lockedBlob.label} #${lockedBlob.id}`, badgeX + 8, badgeY + 14);
+
+        // Speed / Status
+        ctx.fillStyle = isOver ? '#ffffff' : (isMoving ? '#38bdf8' : '#fbbf24');
+        ctx.font = 'bold 13px monospace';
+        const speedStr = isStationary
+          ? '[จอดนิ่ง/นิ่งอยู่]'
+          : currentSpeedKmh > 0
+          ? `${currentSpeedKmh} km/h`
+          : 'กำลังคำนวณ...';
+        ctx.fillText(speedStr, badgeX + 8, badgeY + 28);
+      }
+      return; // Do NOT render any other blobs! Keeps screen 100% clean and isolated
+    }
+
+    // SCENARIO 2: No target is locked -> Render dashed selection brackets
+    for (const blob of blobs) {
+      const { bbox, centroid } = blob;
+
+      // Dashed Corner Brackets
+      const cornerLen = Math.min(bbox.w, bbox.h) * 0.25;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
 
       // Top-Left
       ctx.beginPath();
@@ -569,41 +721,31 @@ export const CameraView: React.FC = () => {
       ctx.lineTo(bbox.x, bbox.y + bbox.h);
       ctx.lineTo(bbox.x, bbox.y + bbox.h - cornerLen);
       ctx.stroke();
+      ctx.restore();
 
-      // 3. Centroid Crosshair
-      ctx.fillStyle = themeColor;
+      // Center touch indicator
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.9)';
       ctx.beginPath();
       ctx.arc(centroid.x, centroid.y, 4, 0, Math.PI * 2);
       ctx.fill();
 
-      // 4. Live Target Badge Overlay
-      const badgeW = 140;
-      const badgeH = 32;
+      // Selector pill badge: "👆 แตะเลือก: [icon] [label]"
+      const badgeW = 145;
+      const badgeH = 26;
       const badgeX = bbox.x + bbox.w / 2 - badgeW / 2;
-      const badgeY = Math.max(10, bbox.y - badgeH - 8);
+      const badgeY = Math.max(8, bbox.y - badgeH - 6);
 
-      ctx.fillStyle = isOver ? 'rgba(239, 68, 68, 0.92)' : 'rgba(15, 23, 42, 0.88)';
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
       ctx.beginPath();
-      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, [8]);
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, [6]);
       ctx.fill();
-      ctx.strokeStyle = isOver ? '#fca5a5' : themeColor;
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+      ctx.lineWidth = 1;
       ctx.stroke();
 
-      // Target Label
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = '#38bdf8';
       ctx.font = 'bold 11px sans-serif';
-      ctx.fillText(`${blob.icon} ${blob.label} #${blob.id}`, badgeX + 8, badgeY + 14);
-
-      // Speed / Status
-      ctx.fillStyle = isOver ? '#ffffff' : themeColor;
-      ctx.font = 'bold 12px monospace';
-      const speedStr = isStationary
-        ? '[จอดนิ่ง/นิ่งอยู่]'
-        : currentSpeedKmh > 0
-        ? `${currentSpeedKmh} km/h`
-        : 'กำลังคำนวณ...';
-      ctx.fillText(speedStr, badgeX + 8, badgeY + 27);
+      ctx.fillText(`👆 แตะเลือก: ${blob.icon} ${blob.label} #${blob.id}`, badgeX + 6, badgeY + 17);
     }
   };
 
@@ -1031,62 +1173,119 @@ export const CameraView: React.FC = () => {
           )}
         </div>
 
+        {/* Target Focus Status or Tap Prompt */}
+        {lockedTargetId !== null && lockedBlob ? (
+          <div className="pointer-events-auto self-center flex items-center gap-2.5 bg-slate-950/95 border-2 border-amber-400/90 text-amber-200 px-3.5 py-1.5 rounded-2xl text-xs shadow-2xl backdrop-blur-md animate-in fade-in">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span className="font-bold text-amber-300">
+              🎯 โฟกัส: {lockedBlob.icon} {lockedBlob.label} #{lockedBlob.id}
+            </span>
+            <span className="font-mono font-black text-white px-2 py-0.5 rounded-md bg-slate-900 border border-slate-700">
+              {lockedBlob.isStationary ? '[จอดนิ่ง]' : `${lockedBlob.currentSpeedKmh} km/h`}
+            </span>
+            <button
+              onClick={() => {
+                setLockedTargetId(null);
+                setToastNote('🔓 ปลดล็อกเป้าหมายแล้ว - แตะเลือกเป้าใหม่');
+                setTimeout(() => setToastNote(null), 2000);
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold active:scale-95 shadow transition"
+              title="ปลดล็อกเพื่อเลือกเป้าหมายอื่น"
+            >
+              <X className="w-3 h-3" />
+              <span>ปลดล็อก</span>
+            </button>
+          </div>
+        ) : activeBlobs.length > 0 ? (
+          <div className="pointer-events-auto self-center flex items-center gap-2 bg-slate-900/90 border border-sky-500/60 text-sky-200 px-3.5 py-1.5 rounded-full text-xs shadow-xl backdrop-blur-md animate-in fade-in">
+            <span className="text-sm">👆</span>
+            <span className="font-semibold">แตะเลือกวัตถุบนจอ หรือกดปุ่มด้านล่างเพื่อเริ่มโฟกัส</span>
+          </div>
+        ) : null}
+
         {/* Bottom Live Feed Stats & Manual Snap Row */}
         <div className="pointer-events-auto flex items-center justify-between gap-2 max-w-full">
-          <div className="flex gap-2 overflow-x-auto pb-1 max-w-full no-scrollbar flex-1">
-            {activeBlobs.length === 0 ? (
+          <div className="flex gap-2 overflow-x-auto pb-1 max-w-full no-scrollbar flex-1 items-center">
+            {lockedTargetId !== null && lockedBlob ? (
+              /* A: Single Locked Target Focused Card */
+              <div
+                className={`shrink-0 flex items-center gap-3 px-4 py-2 rounded-2xl border-2 backdrop-blur-md transition shadow-2xl ${
+                  lockedBlob.currentSpeedKmh > speedLimitKmh
+                    ? 'border-rose-500 bg-rose-950/90 text-rose-200'
+                    : 'border-amber-400/90 bg-slate-950/95 text-amber-200'
+                }`}
+              >
+                <div className="flex flex-col items-center">
+                  <span className="text-xl">{lockedBlob.icon}</span>
+                  <span className="text-[10px] font-mono font-bold text-amber-300">#{lockedBlob.id}</span>
+                </div>
+
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white">🎯 โฟกัส: {lockedBlob.label}</span>
+                    <button
+                      onClick={() => {
+                        setLockedTargetId(null);
+                        setToastNote('🔓 ปลดล็อกเป้าหมายแล้ว');
+                        setTimeout(() => setToastNote(null), 1800);
+                      }}
+                      className="text-[10px] bg-rose-600 hover:bg-rose-500 text-white px-2 py-0.5 rounded font-bold transition active:scale-95"
+                    >
+                      ✕ ปลดล็อก
+                    </button>
+                  </div>
+
+                  <div className="flex items-baseline gap-1.5 mt-0.5">
+                    {lockedBlob.isStationary ? (
+                      <span className="text-xs text-amber-400 font-semibold">[จอดนิ่ง/นิ่งอยู่]</span>
+                    ) : (
+                      <>
+                        <span className="text-xl font-black font-mono text-white">
+                          {lockedBlob.currentSpeedKmh}
+                        </span>
+                        <span className="text-xs font-bold text-sky-400 font-sans">km/h</span>
+                        <span className="text-[10px] text-slate-400 ml-2">
+                          สูงสุด: {lockedBlob.peakSpeedKmh} km/h
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : activeBlobs.length > 0 ? (
+              /* B: Target Selection Quick Buttons (No Target Locked Yet) */
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                <span className="text-[11px] font-bold text-sky-300 shrink-0 bg-slate-900/90 px-2.5 py-1.5 rounded-xl border border-sky-500/40">
+                  👆 เลือกโฟกัส:
+                </span>
+                {activeBlobs.map((blob) => (
+                  <button
+                    key={blob.id}
+                    onClick={() => {
+                      setLockedTargetId(blob.id);
+                      audioAlert.playDetectBlip();
+                      setToastNote(`🎯 ล็อกเป้าหมาย: ${blob.label} #${blob.id}`);
+                      setTimeout(() => setToastNote(null), 2000);
+                    }}
+                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/95 hover:bg-sky-950 border border-sky-400/80 text-sky-200 text-xs font-bold rounded-xl shadow-2xl active:scale-95 transition"
+                  >
+                    <span className="text-base">{blob.icon}</span>
+                    <span>เลือก {blob.label} #{blob.id}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              /* C: Waiting / Scanning Indicator */
               <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 px-3.5 py-2 rounded-xl text-xs text-slate-300 flex items-center gap-2 shadow-xl">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
                 <span>
                   {sourceMode === 'sim'
                     ? '🎮 กำลังรอรถแล่นผ่าน (กดปุ่ม "ปล่อยรถ 1 คัน" เพื่อเริ่มทดสอบ)'
                     : isHandheld
-                    ? '📱 ระบบกันสั่นเปิดอยู่: เล็งกล้องไปที่ถนน (จะล็อกเฉพาะคนหรือรถที่วิ่งผ่านจริง)'
+                    ? '📱 เล็งกล้องไปที่ถนน: เมื่อมีรถหรือคนปรากฏ แตะเลือกเพื่อเริ่มโฟกัส'
                     : '📡 กำลังสแกนหา "คน" หรือ "รถ"'}
                 </span>
               </div>
-            ) : (
-              activeBlobs.map((blob) => {
-                const isOver = blob.currentSpeedKmh > speedLimitKmh;
-                return (
-                  <div
-                    key={blob.id}
-                    className={`shrink-0 flex items-center gap-3 px-3.5 py-2 rounded-xl border backdrop-blur-md transition shadow-2xl ${
-                      isOver
-                        ? 'border-rose-500 bg-rose-950/85 text-rose-200'
-                        : blob.category === 'person'
-                        ? 'border-emerald-500 bg-emerald-950/85 text-emerald-200'
-                        : 'border-sky-500 bg-sky-950/85 text-sky-200'
-                    }`}
-                  >
-                    <div className="flex flex-col items-center">
-                      <span className="text-base">{blob.icon}</span>
-                      <span className="text-[10px] font-mono text-slate-300">#{blob.id}</span>
-                    </div>
-
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-white">{blob.label}</span>
-                        {blob.isStationary ? (
-                          <span className="text-[10px] text-amber-400 font-medium">[จอดนิ่ง]</span>
-                        ) : (
-                          <div className="flex items-baseline gap-0.5">
-                            <span className="text-base font-black font-mono">
-                              {blob.currentSpeedKmh}
-                            </span>
-                            <span className="text-[10px] font-sans font-medium">km/h</span>
-                          </div>
-                        )}
-                      </div>
-                      {!blob.isStationary && (
-                        <span className="text-[10px] text-slate-300">
-                          สูงสุด: {blob.peakSpeedKmh} km/h
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
             )}
           </div>
 
@@ -1122,6 +1321,18 @@ export const CameraView: React.FC = () => {
             </div>
 
             <div className="space-y-4 text-xs leading-relaxed text-slate-300">
+              <div className="bg-slate-950 p-3 rounded-xl border border-sky-600/50">
+                <h4 className="font-bold text-sky-400 mb-1 flex items-center gap-1.5">
+                  <span>🎯 ระบบแตะเลือกวัตถุเพื่อโฟกัส (Tap-to-Focus)</span>
+                </h4>
+                <p>
+                  • <strong>ไม่ตีกรอบหลายชิ้นพร้อมกัน:</strong> เมื่อส่องกล้อง หน้าจอจะแสดงกรอบปรุให้แตะเลือก
+                  <br />• <strong>วิธีเลือกเป้าหมาย:</strong> แตะที่ตัวรถหรือคนที่ต้องการบนหน้าจอ หรือกดปุ่ม <strong>[เลือก รถยนต์ #1]</strong> ด้านล่าง
+                  <br />• <strong>เมื่อโฟกัสแล้ว:</strong> ระบบจะซ่อนวัตถุอื่นทั้งหมด และโฟกัสวัดความเร็วเฉพาะเป้าหมายนี้ตัวเดียว
+                  <br />• <strong>การปลดล็อก:</strong> กดปุ่ม <strong>"✕ ปลดล็อก"</strong> เพื่อเปลี่ยนไปโฟกัสคันอื่นได้ตลอดเวลา
+                </p>
+              </div>
+
               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                 <h4 className="font-bold text-emerald-400 mb-1 flex items-center gap-1.5">
                   <span>1. ระบบกันมือสั่น (Handheld Anti-Tremor)</span>
