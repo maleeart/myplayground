@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ระบบจำลองและนำเสนอแผนผังการทำงานของ HRSG & Wet FGD โรงไฟฟ้าแม่เมาะ</title>
     <link rel="stylesheet" href="styles.css?v=1.4.0">
+    <link rel="stylesheet" href="bill-split.css?v=1.0.0">
     <!-- PWA & iOS Add to Home Screen Support -->
     <link rel="apple-touch-icon" href="apple-touch-icon.jpg">
     <link rel="icon" type="image/jpeg" href="favicon.jpg">
@@ -69,6 +70,14 @@
                             <line x1="12" y1="2" x2="12" y2="15.5" />
                         </svg>
                         เกม RPG D&D
+                    </button>
+                    <button id="nav-billsplit-btn" class="nav-link-btn" data-theme="billsplit">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5">
+                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                            <line x1="2" y1="10" x2="22" y2="10"/>
+                            <circle cx="16" cy="15" r="1"/>
+                        </svg>
+                        เคลียร์ตังค์ (Bill Split)
                     </button>
                     <a href="/speed/" target="_blank" class="nav-link-btn" style="text-decoration: none; color: inherit; display: inline-flex; align-items: center; gap: 6px;">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.5">
@@ -174,6 +183,19 @@
                     <p>วัดความเร็วรถบนถนนแบบ Real-time ด้วยกล้องมือถือ ประมวลผล Computer Vision (MobileNet COCO-SSD) ในเบราว์เซอร์ พร้อมระบบเทียบมุมมองถนน Homography 4 จุด และติดตามรถด้วย ByteTrack</p>
                     <button class="mode-btn btn-blue" onclick="window.open('/speed/', '_blank')">เปิดกล้องวัดความเร็ว PWA →</button>
                 </div>
+
+                <div class="mode-card" id="mode-billsplit">
+                    <div class="mode-icon-box" style="background: rgba(16, 185, 129, 0.15); box-shadow: 0 0 20px rgba(16, 185, 129, 0.35);">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="4" width="20" height="16" rx="2"/>
+                            <line x1="2" y1="10" x2="22" y2="10"/>
+                            <circle cx="16" cy="15" r="1"/>
+                        </svg>
+                    </div>
+                    <h3>เคลียร์ตังค์กองกลาง (Bill Splitter) 💸</h3>
+                    <p>คิดค่าใช้จ่ายเวลาไปกินข้าวหรือจ่ายค่าอะไรร่วมกัน ใครออกให้ก่อนก็บันทึกไว้ สลับคนจ่ายได้ทุกบิล เช็คยอดค้างเคลียร์ย้อนหลัง & ตัดทอนยอดหนี้ให้โอนน้อยครั้งที่สุด พร้อมสแกนจ่าย PromptPay QR ทันที!</p>
+                    <button class="mode-btn btn-green">เปิดระบบเคลียร์บิล →</button>
+                </div>
             </div>
 
             <!-- System Command HUD -->
@@ -205,6 +227,10 @@
                     <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); text-align: left;">
                         <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; font-weight: bold; text-transform: uppercase;">RPG GM Engine</span>
                         <span style="font-size: 0.82rem; font-weight: 700; color: #f43f5e; display: block; margin-top: 0.25rem;">D20 GM Active</span>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.03); text-align: left;">
+                        <span style="font-size: 0.65rem; color: var(--text-secondary); display: block; font-weight: bold; text-transform: uppercase;">Bill Splitter</span>
+                        <span style="font-size: 0.82rem; font-weight: 700; color: #10b981; display: block; margin-top: 0.25rem;">Multi-Payer Ready</span>
                     </div>
                 </div>
             </div>
@@ -1936,8 +1962,14 @@
                 </div>
             </div>
         </div>
+
+        <!-- View 7: Bill Splitter View (เคลียร์ตังค์กองกลาง) -->
+        <div id="billsplit-view" class="view-section hidden">
+            <div id="billsplit-app-root"></div>
+        </div>
     </div> <!-- End of .dashboard wrapper -->
     
+    <script src="bill-split.js?v=1.0.0"></script>
     <script src="app.js?v=1.4.0"></script>
 </body>
 </html>

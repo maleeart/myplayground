@@ -767,6 +767,7 @@ function switchView(viewName) {
     const cashflowView = document.getElementById("cashflow-view");
     const egatFundsView = document.getElementById("egat-funds-view");
     const dndAdventureView = document.getElementById("dnd-adventure-view");
+    const billsplitView = document.getElementById("billsplit-view");
     const powerplantTabs = document.getElementById("powerplant-tabs");
 
     // Pause powerplant autoplay when leaving powerplant view
@@ -781,6 +782,7 @@ function switchView(viewName) {
     cashflowView.classList.add("hidden");
     if (egatFundsView) egatFundsView.classList.add("hidden");
     if (dndAdventureView) dndAdventureView.classList.add("hidden");
+    if (billsplitView) billsplitView.classList.add("hidden");
 
     // Update active nav button
     document.querySelectorAll(".nav-link-btn").forEach(btn => btn.classList.remove("active"));
@@ -821,6 +823,15 @@ function switchView(viewName) {
         powerplantTabs.classList.add("hidden");
         // Initialize DND engine
         initDndEngine();
+    } else if (viewName === "billsplit") {
+        if (billsplitView) billsplitView.classList.remove("hidden");
+        const navBtn = document.getElementById("nav-billsplit-btn");
+        if (navBtn) navBtn.classList.add("active");
+        powerplantTabs.classList.add("hidden");
+        // Initialize Bill Splitter engine
+        if (window.initBillSplitPage) {
+            window.initBillSplitPage();
+        }
     }
 }
 
@@ -841,6 +852,9 @@ function initNavigation() {
     const cardDnd = document.getElementById("mode-dnd");
     if (cardDnd) cardDnd.addEventListener("click", () => switchView("dnd"));
 
+    const cardBillSplit = document.getElementById("mode-billsplit");
+    if (cardBillSplit) cardBillSplit.addEventListener("click", () => switchView("billsplit"));
+
     // Top Navigation Link Buttons
     document.getElementById("nav-home-btn").addEventListener("click", () => switchView("home"));
     document.getElementById("nav-powerplant-btn").addEventListener("click", () => switchView("powerplant"));
@@ -852,6 +866,9 @@ function initNavigation() {
 
     const navDnd = document.getElementById("nav-dnd-btn");
     if (navDnd) navDnd.addEventListener("click", () => switchView("dnd"));
+
+    const navBillSplit = document.getElementById("nav-billsplit-btn");
+    if (navBillSplit) navBillSplit.addEventListener("click", () => switchView("billsplit"));
 
     // Brand Logo Click
     document.getElementById("brand-logo").addEventListener("click", () => switchView("home"));
