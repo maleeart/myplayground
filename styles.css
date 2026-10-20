@@ -887,12 +887,23 @@ svg.has-highlight .interactive-component:not(.highlighted) {
 /* ================= VIEW 1: HOME VIEW (LANDING PAGE) ================= */
 #home-view {
     overflow-y: auto;
-    padding: 4rem 2rem;
+    -webkit-overflow-scrolling: touch;
+    padding: 3rem 1.5rem;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     background: radial-gradient(circle at top, rgba(30, 41, 59, 0.3) 0%, transparent 70%);
+}
+
+#smartops-view,
+#billsplit-view,
+#dnd-adventure-view,
+#egat-funds-view,
+#affiliate-view,
+#cashflow-view {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .welcome-hero {
@@ -2441,10 +2452,35 @@ svg.has-highlight .interactive-component:not(.highlighted) {
     .presentation-badge {
         display: none; /* Hide badge on mobile to save space */
     }
+
+    html, body {
+        overflow-y: auto !important;
+        height: auto !important;
+        min-height: 100% !important;
+    }
     
     .dashboard {
         display: flex;
         flex-direction: column;
+        height: auto !important;
+        min-height: 100vh;
+        overflow: visible !important;
+    }
+
+    .view-section {
+        height: auto !important;
+        min-height: calc(100vh - 90px);
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    #home-view {
+        padding: 1.5rem 1rem 3.5rem 1rem !important;
+        justify-content: flex-start !important;
+        height: auto !important;
+        min-height: calc(100vh - 90px);
+        overflow-y: visible !important;
     }
     
     .main-panel {
